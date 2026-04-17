@@ -6,5 +6,18 @@ __pycache__/
 venv/
 env/
 
+data/raw/*.csv
+!data/raw/.gitkeep
+data/processed/*.csv
+!data/processed/.gitkeep
 data/warehouse/*.duckdb
 data/warehouse/*.db
+data/warehouse/*.duckdb*
+data/warehouse/*.db*
+
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.streamlit/secrets.toml
