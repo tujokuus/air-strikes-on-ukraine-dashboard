@@ -1,4 +1,4 @@
-"""Transform raw strike datasets into analytics-ready processed tables."""
+"""Transform bronze strike datasets into analytics-ready silver tables."""
 
 from __future__ import annotations
 

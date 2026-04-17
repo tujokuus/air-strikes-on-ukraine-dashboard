@@ -1,9 +1,9 @@
-"""Run the lightweight CSV-to-processed pipeline for the project."""
+"""Run the lightweight bronze-to-silver pipeline for the project."""
 
 from __future__ import annotations
 
 from .ingest import load_attacks_raw, load_weapon_reference_raw
-from .load import write_processed_csv
+from .load import write_silver_csv
 from .transform import transform_attacks, transform_weapon_reference
 
 
@@ -17,9 +17,9 @@ def main() -> None:
         weapon_reference=weapon_reference,
     )
 
-    reference_path = write_processed_csv(weapon_reference, "weapon_reference_clean.csv")
-    attacks_path = write_processed_csv(attacks_clean, "attacks_clean.csv")
-    regions_path = write_processed_csv(attacks_regions, "attacks_regions.csv")
+    reference_path = write_silver_csv(weapon_reference, "weapon_reference_clean.csv")
+    attacks_path = write_silver_csv(attacks_clean, "attacks_clean.csv")
+    regions_path = write_silver_csv(attacks_regions, "attacks_regions.csv")
 
     print(f"Wrote weapon reference rows: {len(weapon_reference):,} -> {reference_path}")
     print(f"Wrote clean attack rows:     {len(attacks_clean):,} -> {attacks_path}")
