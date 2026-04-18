@@ -9,6 +9,10 @@ env/
 data/bronze/*.csv
 !data/bronze/.gitkeep
 data/silver/*.csv
+data/silver/*.duckdb
+data/silver/*.duckdb*
+data/silver/*.db
+data/silver/*.db*
 !data/silver/.gitkeep
 data/gold/*.duckdb
 data/gold/*.db
