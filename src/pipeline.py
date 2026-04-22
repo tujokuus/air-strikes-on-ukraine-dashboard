@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import duckdb
+
 from .ingest import load_attacks_raw, load_weapon_reference_raw
-from .load import write_silver_csv, write_silver_duckdb
+from .load import write_gold_duckdb, write_silver_csv, write_silver_duckdb
 from .transform import transform_attacks, transform_weapon_reference
 
 
@@ -20,18 +22,28 @@ def main() -> None:
     reference_path = write_silver_csv(weapon_reference, "weapon_reference_clean.csv")
     attacks_path = write_silver_csv(attacks_clean, "attacks_clean.csv")
     regions_path = write_silver_csv(attacks_regions, "attacks_regions.csv")
-    silver_db_path = write_silver_duckdb(
-        {
-            "silver_weapon_reference": weapon_reference,
-            "silver_attacks": attacks_clean,
-            "silver_attack_regions": attacks_regions,
-        }
+    silver_tables = {
+        "silver_weapon_reference": weapon_reference,
+        "silver_attacks": attacks_clean,
+        "silver_attack_regions": attacks_regions,
+    }
+
+    silver_db_path = None
+    try:
+        silver_db_path = write_silver_duckdb(silver_tables)
+    except duckdb.IOException as exc:
+        print(f"Warning: could not refresh silver DuckDB file: {exc}")
+
+    gold_db_path = write_gold_duckdb(
+        silver_tables
     )
 
     print(f"Wrote weapon reference rows: {len(weapon_reference):,} -> {reference_path}")
     print(f"Wrote clean attack rows:     {len(attacks_clean):,} -> {attacks_path}")
     print(f"Wrote exploded area rows:    {len(attacks_regions):,} -> {regions_path}")
-    print(f"Wrote silver DuckDB tables:  {silver_db_path}")
+    if silver_db_path is not None:
+        print(f"Wrote silver DuckDB tables:  {silver_db_path}")
+    print(f"Wrote gold DuckDB marts:     {gold_db_path}")
     print(
         "Reference matches in attacks: "
         f"{int(attacks_clean['weapon_reference_match'].sum()):,}/{len(attacks_clean):,}"
