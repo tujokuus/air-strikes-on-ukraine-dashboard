@@ -1,30 +1,97 @@
+-- Gold marts are physical analytics tables built from the silver layer.
+-- They contain pre-aggregated data so the dashboard can load quickly and stay simple.
+
+-- One-row dashboard summary for the main KPI cards.
 CREATE OR REPLACE TABLE mart_overview_summary AS
+WITH normalized AS (
+    -- Normalize fields once so the summary totals and top-model metrics use the same labels.
+    SELECT
+        *,
+        CASE
+            WHEN COALESCE(NULLIF(TRIM(weapon_model), ''), '') = '' THEN 'Unknown'
+            WHEN LOWER(weapon_model) LIKE 'unknown%' THEN 'Unknown'
+            ELSE weapon_model
+        END AS normalized_weapon_model,
+        CASE
+            WHEN COALESCE(NULLIF(TRIM(weapon_model_key), ''), '') = '' THEN 'unknown'
+            ELSE weapon_model_key
+        END AS normalized_weapon_model_key,
+        COALESCE(NULLIF(weapon_category, ''), 'Unknown category') AS normalized_weapon_category,
+        COALESCE(launched, 0) AS launched_value,
+        COALESCE(destroyed, 0) AS destroyed_value,
+        COALESCE(not_reach_goal, 0) AS not_reach_goal_value,
+        COALESCE(still_attacking, 0) AS still_attacking_value
+    FROM silver_attacks
+),
+overview AS (
 SELECT
     MIN(CAST(NULLIF(event_date, '') AS DATE)) AS first_event_date,
     MAX(CAST(NULLIF(event_date, '') AS DATE)) AS last_event_date,
     COUNT(*) AS total_attack_rows,
     COUNT(DISTINCT NULLIF(event_date, '')) AS distinct_event_dates,
-    COUNT(
-        DISTINCT CASE
-            WHEN COALESCE(NULLIF(TRIM(weapon_model), ''), '') = '' THEN 'Unknown'
-            WHEN LOWER(weapon_model) LIKE 'unknown%' THEN 'Unknown'
-            ELSE weapon_model
-        END
-    ) AS distinct_weapon_models,
-    COUNT(DISTINCT COALESCE(NULLIF(weapon_category, ''), 'Unknown category')) AS distinct_weapon_categories,
-    SUM(COALESCE(launched, 0)) AS total_launched,
-    SUM(COALESCE(destroyed, 0)) AS total_destroyed,
-    SUM(COALESCE(not_reach_goal, 0)) AS total_not_reach_goal,
-    SUM(COALESCE(still_attacking, 0)) AS total_still_attacking,
-    SUM(CASE WHEN area_macro = 'nationwide' THEN COALESCE(launched, 0) ELSE 0 END) AS nationwide_launched_total,
-    SUM(CASE WHEN area_count > 0 THEN COALESCE(launched, 0) ELSE 0 END) AS specific_area_launched_total,
+    COUNT(DISTINCT normalized_weapon_model_key) AS distinct_weapon_models,
+    COUNT(DISTINCT normalized_weapon_category) AS distinct_weapon_categories,
+    SUM(launched_value) AS total_launched,
+    SUM(destroyed_value) AS total_destroyed,
+    SUM(not_reach_goal_value) AS total_not_reach_goal,
+    SUM(still_attacking_value) AS total_still_attacking,
+    SUM(CASE WHEN area_macro = 'nationwide' THEN launched_value ELSE 0 END) AS nationwide_launched_total,
+    SUM(CASE WHEN area_count > 0 THEN launched_value ELSE 0 END) AS specific_area_launched_total,
     SUM(CASE WHEN COALESCE(NULLIF(area_macro, ''), 'unknown') = 'unknown' THEN 1 ELSE 0 END) AS unknown_target_rows,
     SUM(CASE WHEN NOT weapon_reference_match THEN 1 ELSE 0 END) AS unmatched_weapon_reference_rows
-FROM silver_attacks;
+FROM normalized
+),
+top_uav AS (
+    -- Top UAV is selected by launched total across all rows for each cleaned weapon model key.
+    SELECT
+        normalized_weapon_model_key AS top_uav_weapon_model_key,
+        SUM(launched_value) AS top_uav_launched
+    FROM normalized
+    WHERE LOWER(normalized_weapon_category) = 'uav'
+    GROUP BY 1
+    ORDER BY top_uav_launched DESC, top_uav_weapon_model_key
+    LIMIT 1
+),
+top_cruise_missile AS (
+    -- Cruise missiles are calculated separately from ballistic missiles.
+    SELECT
+        normalized_weapon_model_key AS top_cruise_missile_weapon_model_key,
+        SUM(launched_value) AS top_cruise_missile_launched
+    FROM normalized
+    WHERE LOWER(normalized_weapon_category) = 'cruise missile'
+    GROUP BY 1
+    ORDER BY top_cruise_missile_launched DESC, top_cruise_missile_weapon_model_key
+    LIMIT 1
+),
+top_ballistic_missile AS (
+    -- Ballistic calculation includes categories that explicitly contain ballistic.
+    SELECT
+        normalized_weapon_model_key AS top_ballistic_missile_weapon_model_key,
+        SUM(launched_value) AS top_ballistic_missile_launched
+    FROM normalized
+    WHERE LOWER(normalized_weapon_category) LIKE '%ballistic%'
+    GROUP BY 1
+    ORDER BY top_ballistic_missile_launched DESC, top_ballistic_missile_weapon_model_key
+    LIMIT 1
+)
+SELECT
+    overview.*,
+    top_uav.top_uav_weapon_model_key,
+    top_uav.top_uav_launched,
+    top_cruise_missile.top_cruise_missile_weapon_model_key,
+    top_cruise_missile.top_cruise_missile_launched,
+    top_ballistic_missile.top_ballistic_missile_weapon_model_key,
+    top_ballistic_missile.top_ballistic_missile_launched
+FROM overview
+LEFT JOIN top_uav ON TRUE
+LEFT JOIN top_cruise_missile ON TRUE
+LEFT JOIN top_ballistic_missile ON TRUE;
 
 
+-- Daily trend table for time-series charts.
 CREATE OR REPLACE TABLE mart_daily_activity AS
 WITH daily AS (
+    -- First aggregate raw strike rows to one row per event date.
     SELECT
         CAST(event_date AS DATE) AS event_date,
         COUNT(*) AS attack_rows,
@@ -55,6 +122,7 @@ SELECT
         ORDER BY event_date
         ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
     ) AS launched_7d_avg,
+    -- Seven-day rolling averages smooth noisy daily changes in the dashboard line chart.
     AVG(destroyed_total) OVER (
         ORDER BY event_date
         ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
@@ -63,8 +131,10 @@ FROM daily
 ORDER BY event_date;
 
 
+-- Weapon model level summary for top-model charts and reference coverage checks.
 CREATE OR REPLACE TABLE mart_weapon_model_summary AS
 WITH base AS (
+    -- Normalize empty or unknown model names before grouping.
     SELECT
         CASE
             WHEN COALESCE(NULLIF(TRIM(weapon_model), ''), '') = '' THEN 'Unknown'
@@ -80,6 +150,7 @@ WITH base AS (
     FROM silver_attacks
 ),
 grouped AS (
+    -- Group by normalized weapon model and keep useful first/last activity dates.
     SELECT
         weapon_model,
         CASE
@@ -113,6 +184,7 @@ SELECT
     unmatched_rows,
     ROUND(100.0 * matched_rows / NULLIF(attack_rows, 0), 2) AS reference_coverage_pct,
     ROUND(100.0 * launched_total / NULLIF(SUM(launched_total) OVER (), 0), 2) AS launched_share_pct,
+    -- Destruction percentage is calculated against launched count for the same model.
     ROUND(100.0 * destroyed_total / NULLIF(launched_total, 0), 2) AS destroyed_to_launched_pct,
     first_seen,
     last_seen
@@ -120,6 +192,7 @@ FROM grouped
 ORDER BY launched_total DESC, attack_rows DESC, weapon_model;
 
 
+-- Broader weapon type summary, useful when model names are too detailed for a chart.
 CREATE OR REPLACE TABLE mart_weapon_type_summary AS
 SELECT
     COALESCE(NULLIF(weapon_category, ''), 'Unknown category') AS weapon_category,
@@ -136,8 +209,10 @@ GROUP BY 1, 2
 ORDER BY launched_total DESC, attack_rows DESC, weapon_category, weapon_type;
 
 
+-- Target scope summary: nationwide rows, specific area rows, unknowns, and directional macros.
 CREATE OR REPLACE TABLE mart_area_macro_summary AS
 WITH base AS (
+    -- target_scope makes the dashboard labels easier to interpret than raw area_macro alone.
     SELECT
         COALESCE(NULLIF(area_macro, ''), 'unknown') AS area_macro,
         CASE
@@ -164,8 +239,10 @@ GROUP BY 1, 2
 ORDER BY launched_total DESC, attack_rows DESC, area_macro;
 
 
+-- Directional macro summary for the coarse map: north, east, south, center, west, etc.
 CREATE OR REPLACE TABLE mart_directional_macro_summary AS
 WITH direction_centroids(area_macro, lat, lon) AS (
+    -- These are approximate centroid points for dashboard visualization, not exact boundaries.
     VALUES
         ('north', 51.0, 31.5),
         ('north-east', 50.8, 35.4),
@@ -178,6 +255,7 @@ WITH direction_centroids(area_macro, lat, lon) AS (
         ('west', 49.5, 24.5)
 ),
 summary AS (
+    -- Keep only directional macro values that have matching centroid coordinates.
     SELECT
         area_macro,
         COUNT(*) AS attack_rows,
@@ -201,12 +279,15 @@ SELECT
     direction_centroids.lon,
     ROUND(100.0 * summary.launched_total / NULLIF(SUM(summary.launched_total) OVER (), 0), 2) AS launched_share_pct
 FROM summary
+-- LEFT JOIN keeps the summary row even if a centroid is missing, which helps reveal mapping gaps.
 LEFT JOIN direction_centroids USING (area_macro)
 ORDER BY summary.launched_total DESC, summary.attack_rows DESC, summary.area_macro;
 
 
+-- Specific region summary for the region map.
 CREATE OR REPLACE TABLE mart_region_activity AS
 WITH area_centroids(area_region, lat, lon, area_kind) AS (
+    -- Approximate point coordinates for oblasts, cities, and special locations.
     VALUES
         ('Odesa oblast', 46.48, 30.72, 'oblast'),
         ('Mykolaiv oblast', 46.97, 31.99, 'oblast'),
@@ -241,6 +322,7 @@ WITH area_centroids(area_region, lat, lon, area_kind) AS (
         ('Snake Island', 45.26, 30.20, 'special')
 ),
 summary AS (
+    -- silver_attack_regions is exploded: one strike row can produce multiple area rows.
     SELECT
         area_region,
         COUNT(*) AS attack_rows,
@@ -263,5 +345,6 @@ SELECT
     area_centroids.area_kind,
     ROUND(100.0 * summary.launched_total_exploded / NULLIF(SUM(summary.launched_total_exploded) OVER (), 0), 2) AS launched_share_pct
 FROM summary
+-- Missing coordinates stay visible as NULLs so unmapped regions can be detected later.
 LEFT JOIN area_centroids USING (area_region)
 ORDER BY summary.attack_rows DESC, summary.launched_total_exploded DESC, summary.area_region;

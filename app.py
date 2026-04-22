@@ -46,6 +46,20 @@ area_macros = query(
 
 st.subheader("Overview")
 
+st.markdown("""
+<style>
+/* Metricin otsikko (label) */
+[data-testid="stMetricLabel"] {
+    font-size: 1.8rem;
+}
+
+/* Metricin arvo (value) */
+[data-testid="stMetricValue"] {
+    font-size: 1.8rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # KPI cards give a quick read on dataset coverage and scale.
 metric_cols = st.columns(4)
 metric_cols[0].metric("Event range",  f"{overview['first_event_date'].strftime('%d.%m.%Y')} - {overview['last_event_date'].strftime('%d.%m.%Y')}")
@@ -53,9 +67,12 @@ metric_cols[1].metric("Attacks total", format_int(overview["total_attack_rows"])
 metric_cols[2].metric("Launched total", format_int(overview["total_launched"]))
 metric_cols[3].metric("Destroyed total", format_int(overview["total_destroyed"]))
 
-metric_cols = st.columns(4)
+metric_cols = st.columns(5)
 metric_cols[0].metric("Weapon models", format_int(overview["distinct_weapon_models"]))
 metric_cols[1].metric("Weapon categories", format_int(overview["distinct_weapon_categories"]))
+metric_cols[2].metric("Top UAV / Amount launched", f"{overview['top_uav_weapon_model_key']}: {format_int(overview['top_uav_launched'])}")
+metric_cols[3].metric("Top Cruise Missile / Amount launched", f"{overview['top_cruise_missile_weapon_model_key']}: {format_int(overview['top_cruise_missile_launched'])}")
+metric_cols[4].metric("Top Ballistic Missile / Amount launched", f"{overview['top_ballistic_missile_weapon_model_key']}: {format_int(overview['top_ballistic_missile_launched'])}")
 
 st.subheader("Daily Activity")
 

@@ -43,16 +43,51 @@ def _write_duckdb_tables(path: Path, tables: dict[str, pd.DataFrame]) -> Path:
 
 
 def _split_sql_statements(script: str) -> list[str]:
-    """Split a SQL script into executable statements."""
+    """Split a SQL script into executable statements.
+
+    DuckDB can execute SQL comments, but this project splits files into
+    statements before execution. The splitter therefore skips comments so a
+    semicolon inside a comment does not become a fake statement boundary.
+    """
     statements: list[str] = []
     current: list[str] = []
     in_single_quote = False
     in_double_quote = False
+    index = 0
 
-    for char in script:
+    while index < len(script):
+        char = script[index]
+        next_char = script[index + 1] if index + 1 < len(script) else ""
+
+        if not in_single_quote and not in_double_quote and char == "-" and next_char == "-":
+            while index < len(script) and script[index] not in "\r\n":
+                index += 1
+            current.append("\n")
+            continue
+
+        if not in_single_quote and not in_double_quote and char == "/" and next_char == "*":
+            index += 2
+            while index + 1 < len(script) and not (
+                script[index] == "*" and script[index + 1] == "/"
+            ):
+                index += 1
+            index += 2
+            current.append(" ")
+            continue
+
         if char == "'" and not in_double_quote:
+            if in_single_quote and next_char == "'":
+                current.append(char)
+                current.append(next_char)
+                index += 2
+                continue
             in_single_quote = not in_single_quote
         elif char == '"' and not in_single_quote:
+            if in_double_quote and next_char == '"':
+                current.append(char)
+                current.append(next_char)
+                index += 2
+                continue
             in_double_quote = not in_double_quote
 
         if char == ";" and not in_single_quote and not in_double_quote:
@@ -60,9 +95,11 @@ def _split_sql_statements(script: str) -> list[str]:
             if statement:
                 statements.append(statement)
             current = []
+            index += 1
             continue
 
         current.append(char)
+        index += 1
 
     tail = "".join(current).strip()
     if tail:
