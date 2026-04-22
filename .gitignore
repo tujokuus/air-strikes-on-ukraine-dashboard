@@ -28,5 +28,6 @@ data/warehouse/
 .ruff_cache/
 .coverage
 htmlcov/
+.streamlit-server.*.log
 
 .streamlit/secrets.toml
