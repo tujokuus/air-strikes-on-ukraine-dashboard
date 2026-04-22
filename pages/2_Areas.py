@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
@@ -18,23 +19,113 @@ area_macros = query("SELECT * FROM vw_dashboard_area_macros")
 directional = query("SELECT * FROM vw_dashboard_directional_macros")
 region_map = query("SELECT * FROM vw_dashboard_region_map")
 
+# Combine target scopes for the main dashboard chart so each area macro appears only once.
+area_macros_chart = (
+    area_macros.groupby("area_macro", as_index=False)
+    .agg(
+        attack_rows=("attack_rows", "sum"),
+        active_days=("active_days", "max"),
+        launched_total=("launched_total", "sum"),
+        destroyed_total=("destroyed_total", "sum"),
+    )
+    .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
+)
+area_macros_chart["launched_share_pct"] = (
+    100.0
+    * area_macros_chart["launched_total"]
+    / area_macros_chart["launched_total"].sum()
+).round(2)
+
 st.subheader("Area Macro Summary")
 
+# Let the user choose one or both metrics for the area macro chart.
+col1, col2 = st.columns(2)
+
+with col1:
+    show_launched_total = st.toggle("Launched total", value=True)
+
+with col2:
+    show_strike_records = st.toggle("Strike records", value=False)
+
 # Log scale is helpful because nationwide rows are much larger than most specific regions.
-use_log = st.checkbox("Use log scale for launched totals", value=True)
-fig = px.bar(
-    area_macros,
-    x="area_macro",
-    y="launched_total",
-    text="attack_rows",
-    color="launched_total",
-    color_continuous_scale=["#2b0a0a", "#5e1111", "#962020", "#d73a31"],
-    title="Launched total by area macro",
-)
-fig.update_layout(xaxis_title="Area macro", yaxis_title="Launched total")
-if use_log:
-    fig.update_yaxes(type="log")
-st.plotly_chart(fig, use_container_width=True)
+use_log = st.toggle("Use log scale", value=True)
+
+if show_launched_total and show_strike_records:
+    fig = go.Figure()
+    fig.add_bar(
+        x=area_macros_chart["area_macro"],
+        y=area_macros_chart["launched_total"],
+        name="Launched total",
+        marker_color="#9e1e1e",
+        offsetgroup="launched",
+        yaxis="y",
+    )
+    fig.add_bar(
+        x=area_macros_chart["area_macro"],
+        y=area_macros_chart["attack_rows"],
+        name="Strike records",
+        marker_color="#2d6a4f",
+        offsetgroup="records",
+        yaxis="y2",
+    )
+    fig.update_layout(
+        title="Launched total and strike records by area macro",
+        xaxis_title="Area macro",
+        yaxis=dict(title="Launched total", type="log" if use_log else "linear"),
+        yaxis2=dict(
+            title="Strike records",
+            overlaying="y",
+            side="right",
+            type="log" if use_log else "linear",
+        ),
+        barmode="group",
+        legend_title_text="",
+    )
+elif show_strike_records:
+    fig = px.bar(
+        area_macros_chart,
+        x="area_macro",
+        y="attack_rows",
+        text="attack_rows",
+        hover_data=["launched_total", "destroyed_total", "launched_share_pct"],
+        color_discrete_sequence=["#2d6a4f"],
+        title="Strike records by area macro",
+        labels={
+            "area_macro": "Area macro",
+            "attack_rows": "Strike records",
+            "launched_total": "Launched total",
+            "destroyed_total": "Destroyed total",
+            "launched_share_pct": "Launched share %",
+        },
+    )
+    fig.update_layout(xaxis_title="Area macro", yaxis_title="Strike records")
+    if use_log:
+        fig.update_yaxes(type="log")
+elif show_launched_total:
+    fig = px.bar(
+        area_macros_chart,
+        x="area_macro",
+        y="launched_total",
+        text="launched_total",
+        hover_data=["attack_rows", "destroyed_total", "launched_share_pct"],
+        color_discrete_sequence=["#9e1e1e"],
+        title="Launched total by area macro",
+        labels={
+            "area_macro": "Area macro",
+            "attack_rows": "Strike records",
+            "launched_total": "Launched total",
+            "destroyed_total": "Destroyed total",
+            "launched_share_pct": "Launched share %",
+        },
+    )
+    fig.update_layout(xaxis_title="Area macro", yaxis_title="Launched total")
+    if use_log:
+        fig.update_yaxes(type="log")
+
+if show_launched_total or show_strike_records:
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Select at least one metric to show the area macro chart.")
 
 st.subheader("Directional Macro Map")
 
@@ -56,7 +147,7 @@ fig = px.scatter_geo(
         "lat": False,
         "lon": False,
     },
-    color_continuous_scale=["#220707", "#5a1010", "#9e1e1e", "#ff7043"],
+    color_continuous_scale=["#2b0000", "#7f0000", "#cc0000", "#ff4d4d", "#ff9999"],
     projection="mercator",
     scope="europe",
     title="Directional macro target map",
