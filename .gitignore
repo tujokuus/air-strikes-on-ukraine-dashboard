@@ -30,5 +30,6 @@ data/warehouse/
 htmlcov/
 .streamlit-server.*.log
 
+TODO.txt
 .streamlit/secrets.toml
 .kaggle/
