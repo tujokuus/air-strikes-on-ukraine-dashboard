@@ -8,7 +8,6 @@ import streamlit as st
 from dashboard.data import ensure_gold_database, query
 
 
-st.set_page_config(page_title="Areas", layout="wide")
 st.title("Areas")
 st.caption("Target macro areas, directional summaries, and centroid maps.")
 

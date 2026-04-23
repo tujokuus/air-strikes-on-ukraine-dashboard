@@ -6,7 +6,6 @@ import streamlit as st
 from dashboard.data import ensure_gold_database, query
 
 
-st.set_page_config(page_title="Weapons", layout="wide")
 st.title("Weapons")
 st.caption("Weapon model and type summaries from the gold DuckDB layer.")
 
@@ -109,5 +108,4 @@ type_guide = [
 if type_guide:
     st.markdown("**Weapon type guide**")
     st.dataframe(type_guide, use_container_width=True, hide_index=True)
-
 
