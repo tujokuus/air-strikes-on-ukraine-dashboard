@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 import plotly.express as px
+import pydeck as pdk
 import streamlit as st
 
 from dashboard.data import ensure_gold_database, query
@@ -35,6 +36,86 @@ area_macros_chart["launched_share_pct"] = (
     * area_macros_chart["launched_total"]
     / area_macros_chart["launched_total"].sum()
 ).round(2)
+area_macros_chart["strike_record_share_pct"] = (
+    100.0
+    * area_macros_chart["attack_rows"]
+    / area_macros_chart["attack_rows"].sum()
+).round(2)
+area_macros_chart["air_defense_success_pct"] = (
+    100.0
+    * area_macros_chart["destroyed_total"]
+    / area_macros_chart["launched_total"].replace({0: None})
+).round(2)
+
+
+def area_macro_value(area_macro: str, column: str):
+    """Return one summary value for a combined area macro row."""
+    values = area_macros_chart.loc[area_macros_chart["area_macro"] == area_macro, column]
+    if values.empty:
+        return 0
+    return values.iloc[0]
+
+
+def pick_available_column(frame, preferred: str, fallback: str) -> str:
+    """Return the preferred column when available, otherwise use a safe fallback."""
+    return preferred if preferred in frame.columns else fallback
+
+
+def add_map_marker_columns(frame, color_value_column: str, size_value_column: str):
+    """Add pydeck-compatible marker size and color columns."""
+    map_frame = frame.copy()
+
+    max_size_value = map_frame[size_value_column].max()
+    if max_size_value and max_size_value > 0:
+        size_ratio = (map_frame[size_value_column] / max_size_value).pow(0.5)
+        map_frame["marker_size"] = (15_000 + size_ratio * 85_000).round(0)
+    else:
+        map_frame["marker_size"] = 24_000
+
+    max_color_value = map_frame[color_value_column].max()
+
+    def marker_color(value):
+        if not max_color_value or max_color_value <= 0:
+            return [127, 0, 0, 180]
+
+        ratio = value / max_color_value
+        if ratio >= 0.75:
+            return [127, 0, 0, 190]
+        if ratio >= 0.50:
+            return [204, 0, 0, 180]
+        if ratio >= 0.25:
+            return [255, 77, 77, 170]
+        return [255, 153, 153, 160]
+
+    map_frame["marker_color"] = map_frame[color_value_column].apply(marker_color)
+    return map_frame
+
+
+def render_point_map(frame, tooltip_text: str, height: int) -> None:
+    """Render a pydeck point map with hover tooltip support."""
+    point_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=frame,
+        get_position="[lon, lat]",
+        get_radius="marker_size",
+        get_fill_color="marker_color",
+        pickable=True,
+        auto_highlight=True,
+    )
+    view_state = pdk.ViewState(
+        latitude=48.9,
+        longitude=31.5,
+        zoom=5.1,
+        pitch=0,
+    )
+    deck = pdk.Deck(
+        map_style=None,
+        initial_view_state=view_state,
+        layers=[point_layer],
+        tooltip={"text": tooltip_text},
+    )
+    st.pydeck_chart(deck, width="stretch", height=height)
+
 
 st.subheader("Area Macro Summary")
 
@@ -87,7 +168,7 @@ elif show_strike_records:
         x="area_macro",
         y="attack_rows",
         text="attack_rows",
-        hover_data=["launched_total", "destroyed_total", "launched_share_pct"],
+        hover_data=["launched_total", "destroyed_total", "air_defense_success_pct", "launched_share_pct"],
         color_discrete_sequence=["#2d6a4f"],
         title="Strike records by area macro",
         labels={
@@ -95,6 +176,7 @@ elif show_strike_records:
             "attack_rows": "Strike records",
             "launched_total": "Launched total",
             "destroyed_total": "Destroyed total",
+            "air_defense_success_pct": "Air defense success %",
             "launched_share_pct": "Launched share %",
         },
     )
@@ -107,7 +189,7 @@ elif show_launched_total:
         x="area_macro",
         y="launched_total",
         text="launched_total",
-        hover_data=["attack_rows", "destroyed_total", "launched_share_pct"],
+        hover_data=["attack_rows", "destroyed_total", "air_defense_success_pct", "launched_share_pct"],
         color_discrete_sequence=["#9e1e1e"],
         title="Launched total by area macro",
         labels={
@@ -115,6 +197,7 @@ elif show_launched_total:
             "attack_rows": "Strike records",
             "launched_total": "Launched total",
             "destroyed_total": "Destroyed total",
+            "air_defense_success_pct": "Air defense success %",
             "launched_share_pct": "Launched share %",
         },
     )
@@ -127,101 +210,126 @@ if show_launched_total or show_strike_records:
 else:
     st.info("Select at least one metric to show the area macro chart.")
 
+st.markdown(
+    f"""
+    <div style="
+        color: #b91c1c;
+        font-size: 1.08rem;
+        font-weight: 700;
+        border-left: 4px solid #b91c1c;
+        padding: 0.75rem 1rem;
+        margin: 1rem 0;
+        background: #fff1f2;
+    ">
+        Map context: the maps only show rows that can be placed on approximate coordinates.
+        Nationwide rows are {area_macro_value('nationwide', 'launched_share_pct')}% of launched total
+        and {area_macro_value('nationwide', 'strike_record_share_pct')}% of strike records.
+        Unknown target rows are {area_macro_value('unknown', 'launched_share_pct')}% of launched total
+        and {area_macro_value('unknown', 'strike_record_share_pct')}% of strike records.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 st.subheader("Directional Macro Map")
 
+map_metric = st.radio(
+    "Map marker metric",
+    ["Launched", "Strike records", "Air defense success %"],
+    horizontal=True,
+)
+st.caption(
+    "This controls marker color on the directional map. In air defense mode, marker size still follows launched total."
+)
+
 # Macro centroids give a coarse directional view, not exact strike locations.
-fig = px.scatter_geo(
-    directional,
-    lat="lat",
-    lon="lon",
-    text="area_macro",
-    size="attack_rows",
-    size_max=48,
-    color="launched_total",
-    hover_name="area_macro",
-    hover_data={
-        "attack_rows": True,
-        "active_days": True,
-        "launched_total": True,
-        "destroyed_total": True,
-        "lat": False,
-        "lon": False,
-    },
-    color_continuous_scale=["#2b0000", "#7f0000", "#cc0000", "#ff4d4d", "#ff9999"],
-    projection="mercator",
-    scope="europe",
-    title="Directional macro target map",
+directional_map = directional[directional["lat"].notna() & directional["lon"].notna()].copy()
+directional_metric_column = (
+    "launched_total"
+    if map_metric == "Launched"
+    else "attack_rows"
+    if map_metric == "Strike records"
+    else "air_defense_success_pct"
 )
-fig.update_traces(
-    marker=dict(line=dict(color="black", width=1.0), opacity=0.9, sizemin=14),
-    textposition="top center",
+directional_metric_column = pick_available_column(directional_map, directional_metric_column, "launched_total")
+directional_size_column = "launched_total" if map_metric == "Air defense success %" else directional_metric_column
+directional_map = add_map_marker_columns(
+    directional_map,
+    color_value_column=directional_metric_column,
+    size_value_column=directional_size_column,
 )
-fig.update_geos(
-    center={"lat": 48.8, "lon": 31.5},
-    lataxis_range=[44, 53],
-    lonaxis_range=[22, 41],
-    showcountries=True,
-    countrycolor="rgb(90, 90, 90)",
-    showland=True,
-    landcolor="rgb(239, 236, 230)",
-    showocean=True,
-    oceancolor="rgb(222, 228, 236)",
+render_point_map(
+    directional_map,
+    tooltip_text=(
+        "{area_macro}\n"
+        "Strike records: {attack_rows}\n"
+        "Active days: {active_days}\n"
+        "Launched total: {launched_total}\n"
+        "Destroyed total: {destroyed_total}\n"
+        "Air defense success %: {air_defense_success_pct}"
+    ),
+    height=720,
 )
-st.plotly_chart(fig, use_container_width=True)
 
 st.subheader("Specific Region Map")
 
-# Drop rows without coordinates because Plotly cannot place them on the map.
+specific_region_map_metric = st.radio(
+    "Specific region map marker metric",
+    ["Launched", "Strike records", "Air defense success %"],
+    horizontal=True,
+)
+st.caption(
+    "This controls marker color on the specific region map. In air defense mode, marker size still follows launched total."
+)
+
+# Drop rows without coordinates because Streamlit cannot place them on the map.
 mapped_regions = region_map[region_map["lat"].notna()].copy()
+show_foreign_regions = st.toggle("Show foreign regions", value=False)
+if not show_foreign_regions and "area_kind" in mapped_regions.columns:
+    mapped_regions = mapped_regions[mapped_regions["area_kind"] != "foreign_oblast"].copy()
 
-# Label only the busiest regions to keep the map readable.
-mapped_regions["label"] = ""
-if not mapped_regions.empty:
-    label_threshold = mapped_regions["attack_rows"].quantile(0.85)
-    mapped_regions.loc[mapped_regions["attack_rows"] >= label_threshold, "label"] = mapped_regions["area_region"]
-
-# Region totals come from the exploded region table, so multi-area attack rows can contribute to several points.
-fig = px.scatter_geo(
+region_launched_column = (
+    "launched_total_allocated"
+    if "launched_total_allocated" in mapped_regions.columns
+    else "launched_total_exploded"
+)
+region_metric_column = (
+    region_launched_column
+    if specific_region_map_metric == "Launched"
+    else "attack_rows"
+    if specific_region_map_metric == "Strike records"
+    else "air_defense_success_pct"
+)
+region_metric_column = pick_available_column(mapped_regions, region_metric_column, region_launched_column)
+region_size_column = (
+    region_launched_column
+    if specific_region_map_metric == "Air defense success %"
+    else region_metric_column
+)
+mapped_regions = add_map_marker_columns(
     mapped_regions,
-    lat="lat",
-    lon="lon",
-    text="label",
-    size="attack_rows",
-    size_max=50,
-    color="launched_total_exploded",
-    hover_name="area_region",
-    hover_data={
-        "attack_rows": True,
-        "active_days": True,
-        "launched_total_exploded": True,
-        "area_kind": True,
-        "lat": False,
-        "lon": False,
-        "label": False,
-    },
-    color_continuous_scale=["#220707", "#5a1010", "#9e1e1e", "#ff7043"],
-    projection="mercator",
-    scope="europe",
-    title="Region activity map",
+    color_value_column=region_metric_column,
+    size_value_column=region_size_column,
 )
-fig.update_traces(
-    marker=dict(line=dict(color="black", width=0.9), opacity=0.9, sizemin=12),
-    textposition="top center",
-)
-fig.update_geos(
-    center={"lat": 48.8, "lon": 31.5},
-    lataxis_range=[44, 53],
-    lonaxis_range=[22, 41],
-    showcountries=True,
-    countrycolor="rgb(90, 90, 90)",
-    showland=True,
-    landcolor="rgb(239, 236, 230)",
-    showocean=True,
-    oceancolor="rgb(222, 228, 236)",
-)
-st.plotly_chart(fig, use_container_width=True)
+tooltip_lines = [
+    "{area_region}",
+    "Strike records: {attack_rows}",
+    "Active days: {active_days}",
+    f"{region_launched_column}: " + "{" + region_launched_column + "}",
+    "Exploded launched total: {launched_total_exploded}",
+    "Air defense success %: {air_defense_success_pct}",
+    "Area kind: {area_kind}",
+]
+if "reporting_region" in mapped_regions.columns:
+    tooltip_lines.insert(1, "Reporting region: {reporting_region}")
+if "exploded_region_rows" in mapped_regions.columns:
+    tooltip_lines.append("Exploded region rows: {exploded_region_rows}")
+if "source_region_count" in mapped_regions.columns:
+    tooltip_lines.append("Source regions combined: {source_region_count}")
 
-# Explain the most important caveat of the exploded region view directly in the UI.
-st.info(
-    "Region totals come from an exploded area table. If one attack row names several areas, that row appears once per area."
+render_point_map(
+    mapped_regions,
+    tooltip_text="\n".join(tooltip_lines),
+    height=760,
 )
