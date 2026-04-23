@@ -233,6 +233,7 @@ SELECT
     COUNT(DISTINCT event_date) AS active_days,
     SUM(launched) AS launched_total,
     SUM(destroyed) AS destroyed_total,
+    ROUND(100.0 * SUM(destroyed) / NULLIF(SUM(launched), 0), 2) AS air_defense_success_pct,
     ROUND(100.0 * SUM(launched) / NULLIF(SUM(SUM(launched)) OVER (), 0), 2) AS launched_share_pct
 FROM base
 GROUP BY 1, 2
@@ -277,6 +278,7 @@ SELECT
     summary.destroyed_total,
     direction_centroids.lat,
     direction_centroids.lon,
+    ROUND(100.0 * summary.destroyed_total / NULLIF(summary.launched_total, 0), 2) AS air_defense_success_pct,
     ROUND(100.0 * summary.launched_total / NULLIF(SUM(summary.launched_total) OVER (), 0), 2) AS launched_share_pct
 FROM summary
 -- LEFT JOIN keeps the summary row even if a centroid is missing, which helps reveal mapping gaps.
@@ -286,65 +288,116 @@ ORDER BY summary.launched_total DESC, summary.attack_rows DESC, summary.area_mac
 
 -- Specific region summary for the region map.
 CREATE OR REPLACE TABLE mart_region_activity AS
-WITH area_centroids(area_region, lat, lon, area_kind) AS (
-    -- Approximate point coordinates for oblasts, cities, and special locations.
+WITH area_lookup(
+    area_region,
+    reporting_region,
+    lat,
+    lon,
+    area_kind,
+    reporting_lat,
+    reporting_lon,
+    reporting_area_kind
+) AS (
+    -- Approximate point coordinates for source regions plus an oblast-level reporting region.
     VALUES
-        ('Odesa oblast', 46.48, 30.72, 'oblast'),
-        ('Mykolaiv oblast', 46.97, 31.99, 'oblast'),
-        ('Kyiv oblast', 50.45, 30.52, 'oblast'),
-        ('Lviv oblast', 49.84, 24.03, 'oblast'),
-        ('Rivne oblast', 50.62, 26.25, 'oblast'),
-        ('Volyn oblast', 50.75, 25.33, 'oblast'),
-        ('Kherson oblast', 46.64, 32.62, 'oblast'),
-        ('Khmelnytskyi oblast', 49.42, 26.99, 'oblast'),
-        ('Poltava oblast', 49.59, 34.55, 'oblast'),
-        ('Kharkiv oblast', 49.99, 36.23, 'oblast'),
-        ('Sumy oblast', 50.91, 34.80, 'oblast'),
-        ('Chernihiv oblast', 51.50, 31.29, 'oblast'),
-        ('Zaporizhzhia oblast', 47.84, 35.14, 'oblast'),
-        ('Dnipropetrovsk oblast', 48.47, 35.04, 'oblast'),
-        ('Donetsk oblast', 48.72, 37.55, 'oblast'),
-        ('Kirovohrad oblast', 48.51, 32.26, 'oblast'),
-        ('Vinnytsia oblast', 49.23, 28.48, 'oblast'),
-        ('Cherkasy oblast', 49.44, 32.06, 'oblast'),
-        ('Kyiv', 50.45, 30.52, 'city'),
-        ('Odesa', 46.48, 30.72, 'city'),
-        ('Kharkiv', 49.99, 36.23, 'city'),
-        ('Kherson', 46.64, 32.62, 'city'),
-        ('Dnipro', 48.47, 35.04, 'city'),
-        ('Zaporizhzhia', 47.84, 35.14, 'city'),
-        ('Sumy', 50.91, 34.80, 'city'),
-        ('Kramatorsk', 48.72, 37.55, 'city'),
-        ('Kryvyi Rih', 47.91, 33.39, 'city'),
-        ('Starokostiantyniv', 49.76, 27.22, 'city'),
-        ('Kolomyia', 48.53, 25.04, 'city'),
-        ('Ochakiv', 46.61, 31.54, 'city'),
-        ('Snake Island', 45.26, 30.20, 'special')
+        ('Odesa oblast', 'Odesa oblast', 46.48, 30.72, 'oblast', 46.48, 30.72, 'oblast'),
+        ('Mykolaiv oblast', 'Mykolaiv oblast', 46.97, 31.99, 'oblast', 46.97, 31.99, 'oblast'),
+        ('Kyiv oblast', 'Kyiv oblast', 50.45, 30.52, 'oblast', 50.45, 30.52, 'oblast'),
+        ('Lviv oblast', 'Lviv oblast', 49.84, 24.03, 'oblast', 49.84, 24.03, 'oblast'),
+        ('Rivne oblast', 'Rivne oblast', 50.62, 26.25, 'oblast', 50.62, 26.25, 'oblast'),
+        ('Volyn oblast', 'Volyn oblast', 50.75, 25.33, 'oblast', 50.75, 25.33, 'oblast'),
+        ('Kherson oblast', 'Kherson oblast', 46.64, 32.62, 'oblast', 46.64, 32.62, 'oblast'),
+        ('Khmelnytskyi oblast', 'Khmelnytskyi oblast', 49.42, 26.99, 'oblast', 49.42, 26.99, 'oblast'),
+        ('Poltava oblast', 'Poltava oblast', 49.59, 34.55, 'oblast', 49.59, 34.55, 'oblast'),
+        ('Kharkiv oblast', 'Kharkiv oblast', 49.99, 36.23, 'oblast', 49.99, 36.23, 'oblast'),
+        ('Sumy oblast', 'Sumy oblast', 50.91, 34.80, 'oblast', 50.91, 34.80, 'oblast'),
+        ('Chernihiv oblast', 'Chernihiv oblast', 51.50, 31.29, 'oblast', 51.50, 31.29, 'oblast'),
+        ('Zaporizhzhia oblast', 'Zaporizhzhia oblast', 47.84, 35.14, 'oblast', 47.84, 35.14, 'oblast'),
+        ('Dnipropetrovsk oblast', 'Dnipropetrovsk oblast', 48.47, 35.04, 'oblast', 48.47, 35.04, 'oblast'),
+        ('Donetsk oblast', 'Donetsk oblast', 48.72, 37.55, 'oblast', 48.72, 37.55, 'oblast'),
+        ('Kirovohrad oblast', 'Kirovohrad oblast', 48.51, 32.26, 'oblast', 48.51, 32.26, 'oblast'),
+        ('Vinnytsia oblast', 'Vinnytsia oblast', 49.23, 28.48, 'oblast', 49.23, 28.48, 'oblast'),
+        ('Cherkasy oblast', 'Cherkasy oblast', 49.44, 32.06, 'oblast', 49.44, 32.06, 'oblast'),
+        ('Ivano-Frankivsk oblast', 'Ivano-Frankivsk oblast', 48.92, 24.71, 'oblast', 48.92, 24.71, 'oblast'),
+        ('Kursk oblast', 'Kursk oblast', 51.73, 36.19, 'foreign_oblast', 51.73, 36.19, 'foreign_oblast'),
+        ('Kyiv', 'Kyiv oblast', 50.45, 30.52, 'city', 50.45, 30.52, 'oblast'),
+        ('Odesa', 'Odesa oblast', 46.48, 30.72, 'city', 46.48, 30.72, 'oblast'),
+        ('Kharkiv', 'Kharkiv oblast', 49.99, 36.23, 'city', 49.99, 36.23, 'oblast'),
+        ('Kherson', 'Kherson oblast', 46.64, 32.62, 'city', 46.64, 32.62, 'oblast'),
+        ('Dnipro', 'Dnipropetrovsk oblast', 48.47, 35.04, 'city', 48.47, 35.04, 'oblast'),
+        ('Zaporizhzhia', 'Zaporizhzhia oblast', 47.84, 35.14, 'city', 47.84, 35.14, 'oblast'),
+        ('Sumy', 'Sumy oblast', 50.91, 34.80, 'city', 50.91, 34.80, 'oblast'),
+        ('Kramatorsk', 'Donetsk oblast', 48.72, 37.55, 'city', 48.72, 37.55, 'oblast'),
+        ('Kryvyi Rih', 'Dnipropetrovsk oblast', 47.91, 33.39, 'city', 48.47, 35.04, 'oblast'),
+        ('Starokostiantyniv', 'Khmelnytskyi oblast', 49.76, 27.22, 'city', 49.42, 26.99, 'oblast'),
+        ('Kolomyia', 'Ivano-Frankivsk oblast', 48.53, 25.04, 'city', 48.92, 24.71, 'oblast'),
+        ('Ochakiv', 'Mykolaiv oblast', 46.61, 31.54, 'city', 46.97, 31.99, 'oblast'),
+        ('Snake Island', 'Odesa oblast', 45.26, 30.20, 'special', 46.48, 30.72, 'oblast')
+),
+mapped AS (
+    -- Keep full exploded totals, but also allocate each row across its listed area_count.
+    SELECT
+        COALESCE(area_lookup.reporting_region, silver_attack_regions.area_region) AS reporting_region,
+        silver_attack_regions.area_region AS source_area_region,
+        COALESCE(area_lookup.reporting_lat, area_lookup.lat) AS lat,
+        COALESCE(area_lookup.reporting_lon, area_lookup.lon) AS lon,
+        COALESCE(area_lookup.reporting_area_kind, area_lookup.area_kind, 'unmapped') AS area_kind,
+        CONCAT(
+            COALESCE(silver_attack_regions.source_file, ''),
+            ':',
+            CAST(silver_attack_regions.source_row_number AS VARCHAR)
+        ) AS source_record_key,
+        CAST(NULLIF(silver_attack_regions.event_date, '') AS DATE) AS event_date,
+        COALESCE(silver_attack_regions.launched, 0) AS launched,
+        COALESCE(silver_attack_regions.destroyed, 0) AS destroyed,
+        CASE
+            WHEN COALESCE(silver_attack_regions.area_count, 0) > 0
+                THEN CAST(COALESCE(silver_attack_regions.launched, 0) AS DOUBLE) / silver_attack_regions.area_count
+            ELSE CAST(COALESCE(silver_attack_regions.launched, 0) AS DOUBLE)
+        END AS launched_allocated,
+        CASE
+            WHEN COALESCE(silver_attack_regions.area_count, 0) > 0
+                THEN CAST(COALESCE(silver_attack_regions.destroyed, 0) AS DOUBLE) / silver_attack_regions.area_count
+            ELSE CAST(COALESCE(silver_attack_regions.destroyed, 0) AS DOUBLE)
+        END AS destroyed_allocated
+    FROM silver_attack_regions
+    LEFT JOIN area_lookup USING (area_region)
+    WHERE has_specific_area_region
+      AND silver_attack_regions.area_region <> ''
 ),
 summary AS (
-    -- silver_attack_regions is exploded: one strike row can produce multiple area rows.
     SELECT
-        area_region,
-        COUNT(*) AS attack_rows,
-        COUNT(DISTINCT CAST(NULLIF(event_date, '') AS DATE)) AS active_days,
-        SUM(COALESCE(launched, 0)) AS launched_total_exploded,
-        SUM(COALESCE(destroyed, 0)) AS destroyed_total_exploded
-    FROM silver_attack_regions
-    WHERE has_specific_area_region
-      AND area_region <> ''
+        reporting_region,
+        COUNT(DISTINCT source_record_key) AS attack_rows,
+        COUNT(*) AS exploded_region_rows,
+        COUNT(DISTINCT source_area_region) AS source_region_count,
+        COUNT(DISTINCT event_date) AS active_days,
+        SUM(launched) AS launched_total_exploded,
+        SUM(destroyed) AS destroyed_total_exploded,
+        SUM(launched_allocated) AS launched_total_allocated,
+        SUM(destroyed_allocated) AS destroyed_total_allocated,
+        MAX(lat) AS lat,
+        MAX(lon) AS lon,
+        MAX(area_kind) AS area_kind
+    FROM mapped
     GROUP BY 1
 )
 SELECT
-    summary.area_region,
+    summary.reporting_region AS area_region,
+    summary.reporting_region,
     summary.attack_rows,
+    summary.exploded_region_rows,
+    summary.source_region_count,
     summary.active_days,
     summary.launched_total_exploded,
     summary.destroyed_total_exploded,
-    area_centroids.lat,
-    area_centroids.lon,
-    area_centroids.area_kind,
-    ROUND(100.0 * summary.launched_total_exploded / NULLIF(SUM(summary.launched_total_exploded) OVER (), 0), 2) AS launched_share_pct
+    ROUND(summary.launched_total_allocated, 2) AS launched_total_allocated,
+    ROUND(summary.destroyed_total_allocated, 2) AS destroyed_total_allocated,
+    summary.lat,
+    summary.lon,
+    summary.area_kind,
+    ROUND(100.0 * summary.destroyed_total_allocated / NULLIF(summary.launched_total_allocated, 0), 2) AS air_defense_success_pct,
+    ROUND(100.0 * summary.launched_total_allocated / NULLIF(SUM(summary.launched_total_allocated) OVER (), 0), 2) AS launched_share_pct
 FROM summary
 -- Missing coordinates stay visible as NULLs so unmapped regions can be detected later.
-LEFT JOIN area_centroids USING (area_region)
-ORDER BY summary.attack_rows DESC, summary.launched_total_exploded DESC, summary.area_region;
+ORDER BY summary.attack_rows DESC, summary.launched_total_allocated DESC, summary.reporting_region;

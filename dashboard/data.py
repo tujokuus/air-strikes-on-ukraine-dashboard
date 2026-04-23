@@ -22,7 +22,7 @@ def ensure_gold_database() -> None:
 
 
 @st.cache_data(show_spinner=False)
-def query(sql: str) -> pd.DataFrame:
+def _query(sql: str, db_mtime_ns: int) -> pd.DataFrame:
     """Run a read-only DuckDB query and return the result as a pandas DataFrame."""
     ensure_gold_database()
 
@@ -32,6 +32,12 @@ def query(sql: str) -> pd.DataFrame:
         return connection.execute(sql).df()
     finally:
         connection.close()
+
+
+def query(sql: str) -> pd.DataFrame:
+    """Run a cached read-only query that refreshes automatically when gold.duckdb changes."""
+    ensure_gold_database()
+    return _query(sql, GOLD_DB_PATH.stat().st_mtime_ns)
 
 
 def format_int(value: object) -> str:
