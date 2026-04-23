@@ -30,6 +30,11 @@ def main() -> None:
     api = KaggleApi()
     try:
         api.authenticate()
+    except SystemExit as exc:
+        raise SystemExit(
+            "Kaggle authentication failed. Create a Kaggle API token in your "
+            "Kaggle account settings and configure it before running this script."
+        ) from exc
     except Exception as exc:
         raise SystemExit(
             "Kaggle authentication failed. Create a Kaggle API token in your "
