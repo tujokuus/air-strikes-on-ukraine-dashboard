@@ -2,4 +2,6 @@ pandas
 duckdb
 streamlit
 plotly
+pydeck
 pyyaml
+kaggle
