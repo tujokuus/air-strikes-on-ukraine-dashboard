@@ -131,8 +131,3 @@ with right:
     fig.update_layout(xaxis_title="Area macro", yaxis_title="Launched total")
     st.plotly_chart(fig, use_container_width=True)
 
-# This note matters because the map pages use approximate centroid coordinates, not polygons.
-st.info(
-    "The map views use centroid points for regions and macro areas. They are useful for dashboard exploration, "
-    "but they are not exact geospatial boundaries."
-)
