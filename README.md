@@ -1,6 +1,8 @@
-# Ukraine Strikes Analytics
+# Strikes on Ukraine Analytics
 
-Portfolio analytics project for exploring reported missile and UAV strike activity in the war in Ukraine. The project builds a lightweight local data pipeline with Python, DuckDB, SQL, and Streamlit, then serves dashboard-ready marts through an interactive web app.
+Analytics project for exploring reported missile and UAV strike activity in the war in Ukraine. The project builds a lightweight local data pipeline with Python, DuckDB, SQL, and Streamlit, then serves dashboard-ready marts through an interactive web app.
+
+Live dashboard: [https://strikes-on-ukraine-analysis.streamlit.app/](https://strikes-on-ukraine-analysis.streamlit.app/)
 
 The dashboard focuses on:
 
@@ -8,11 +10,10 @@ The dashboard focuses on:
 - launched and destroyed totals by weapon model and weapon type
 - target area summaries and approximate centroid maps
 - air defense success percentage by area
-- data quality and reference coverage checks
 
 ## Project Status
 
-This project is under active development. The current version is a local MVP with a bronze/silver/gold data structure, DuckDB marts, and a Streamlit dashboard.
+This project is under active development and deployed on Streamlit Community Cloud. The current version is a local and deployed MVP with a bronze/silver/gold data structure, DuckDB marts, and a Streamlit dashboard.
 
 Data files and generated databases are intentionally not committed to Git. To run the project locally, add the source CSV files to `data/bronze/` and rebuild the DuckDB files with the pipeline.
 
@@ -57,7 +58,7 @@ flowchart LR
 
 ### Bronze
 
-`data/bronze/` contains the original source CSV files. These files should not be edited manually.
+`data/bronze/` contains the original source CSV files.
 
 You can download the files with:
 
