@@ -253,34 +253,55 @@ def get_filtered_area_macros(start_date: date, end_date: date) -> pd.DataFrame:
 
 
 def get_filtered_directional_macros(start_date: date, end_date: date) -> pd.DataFrame:
-    """Aggregate directional macro metrics over the selected date range."""
+    """Aggregate directional macro metrics from the same allocated region data as the specific map."""
     return query(
-        """
-        WITH aggregated AS (
+        f"""
+        WITH direction_centroids(area_macro, lat, lon) AS (
+            VALUES
+                ('north', 51.0, 31.5),
+                ('north-east', 50.8, 35.4),
+                ('east', 49.0, 36.8),
+                ('south-east', 47.7, 35.5),
+                ('south', 46.8, 31.5),
+                ('center', 49.0, 31.5),
+                ('center-east', 48.9, 34.2),
+                ('center-west', 49.2, 27.5),
+                ('west', 49.5, 24.5)
+        ),
+        region_daily AS (
             SELECT
-                area_macro,
-                MAX(lat) AS lat,
-                MAX(lon) AS lon,
-                SUM(active_days) AS active_days,
+                event_date,
+                reporting_region,
+                SUM(attack_rows) AS attack_rows,
+                SUM(launched_total_allocated) AS launched_total,
+                SUM(destroyed_total_allocated) AS destroyed_total
+            FROM vw_dashboard_region_map_daily
+            WHERE event_date BETWEEN ? AND ?
+            GROUP BY 1, 2
+        ),
+        aggregated AS (
+            SELECT
+                {REGION_MACRO_CASE} AS area_macro,
+                COUNT(DISTINCT event_date) AS active_days,
                 SUM(attack_rows) AS attack_rows,
                 SUM(launched_total) AS launched_total,
                 SUM(destroyed_total) AS destroyed_total
-            FROM vw_dashboard_directional_macros_daily
-            WHERE event_date BETWEEN ? AND ?
+            FROM region_daily
             GROUP BY 1
         )
         SELECT
-            area_macro,
-            lat,
-            lon,
-            active_days,
-            attack_rows,
-            launched_total,
-            destroyed_total,
-            ROUND(100.0 * destroyed_total / NULLIF(launched_total, 0), 2) AS air_defense_success_pct,
-            ROUND(100.0 * launched_total / NULLIF(SUM(launched_total) OVER (), 0), 2) AS launched_share_pct
+            aggregated.area_macro,
+            direction_centroids.lat,
+            direction_centroids.lon,
+            aggregated.active_days,
+            aggregated.attack_rows,
+            ROUND(aggregated.launched_total, 2) AS launched_total,
+            ROUND(aggregated.destroyed_total, 2) AS destroyed_total,
+            ROUND(100.0 * aggregated.destroyed_total / NULLIF(aggregated.launched_total, 0), 2) AS air_defense_success_pct,
+            ROUND(100.0 * aggregated.launched_total / NULLIF(SUM(aggregated.launched_total) OVER (), 0), 2) AS launched_share_pct
         FROM aggregated
-        ORDER BY launched_total DESC, attack_rows DESC, area_macro
+        JOIN direction_centroids USING (area_macro)
+        ORDER BY aggregated.launched_total DESC, aggregated.attack_rows DESC, aggregated.area_macro
         """,
         (start_date, end_date),
     )
