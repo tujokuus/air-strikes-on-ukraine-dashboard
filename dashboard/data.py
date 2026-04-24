@@ -107,6 +107,26 @@ def query(sql: str, params: tuple[Any, ...] | None = None) -> pd.DataFrame:
     return _query(sql, GOLD_DB_PATH.stat().st_mtime_ns, params)
 
 
+def relation_has_column(
+    relation_name: str,
+    column_name: str,
+    schema_name: str = "main",
+) -> bool:
+    """Return True when a table or view exposes the requested column."""
+    result = query(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = ?
+          AND table_name = ?
+          AND column_name = ?
+        LIMIT 1
+        """,
+        (schema_name, relation_name, column_name),
+    )
+    return not result.empty
+
+
 def format_int(value: object) -> str:
     """Format nullable numeric values for Streamlit metric cards."""
     if pd.isna(value):

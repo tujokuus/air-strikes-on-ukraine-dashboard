@@ -7,6 +7,33 @@ import pandas as pd
 from dashboard.data import query
 
 
+REGION_MACRO_CASE = """
+CASE reporting_region
+    WHEN 'Odesa oblast' THEN 'south'
+    WHEN 'Mykolaiv oblast' THEN 'south'
+    WHEN 'Kyiv oblast' THEN 'north'
+    WHEN 'Lviv oblast' THEN 'west'
+    WHEN 'Rivne oblast' THEN 'west'
+    WHEN 'Volyn oblast' THEN 'west'
+    WHEN 'Kherson oblast' THEN 'south'
+    WHEN 'Khmelnytskyi oblast' THEN 'center-west'
+    WHEN 'Poltava oblast' THEN 'center-east'
+    WHEN 'Kharkiv oblast' THEN 'east'
+    WHEN 'Sumy oblast' THEN 'north-east'
+    WHEN 'Chernihiv oblast' THEN 'north'
+    WHEN 'Zaporizhzhia oblast' THEN 'south-east'
+    WHEN 'Dnipropetrovsk oblast' THEN 'center-east'
+    WHEN 'Donetsk oblast' THEN 'east'
+    WHEN 'Kirovohrad oblast' THEN 'center'
+    WHEN 'Vinnytsia oblast' THEN 'center-west'
+    WHEN 'Cherkasy oblast' THEN 'center'
+    WHEN 'Ivano-Frankivsk oblast' THEN 'west'
+    WHEN 'Kursk oblast' THEN 'international'
+    ELSE 'unknown'
+END
+"""
+
+
 def get_filtered_overview(start_date: date, end_date: date) -> pd.Series:
     """Return overview metrics for the selected global date range."""
     return query(
@@ -262,7 +289,7 @@ def get_filtered_directional_macros(start_date: date, end_date: date) -> pd.Data
 def get_filtered_region_map(start_date: date, end_date: date) -> pd.DataFrame:
     """Aggregate specific-region map metrics over the selected date range."""
     return query(
-        """
+        f"""
         WITH aggregated AS (
             SELECT
                 area_region,
@@ -284,6 +311,7 @@ def get_filtered_region_map(start_date: date, end_date: date) -> pd.DataFrame:
         SELECT
             area_region,
             reporting_region,
+            {REGION_MACRO_CASE} AS area_macro,
             lat,
             lon,
             area_kind,

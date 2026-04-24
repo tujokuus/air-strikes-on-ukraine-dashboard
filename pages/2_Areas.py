@@ -371,6 +371,7 @@ mapped_regions = add_map_marker_columns(
 )
 tooltip_lines = [
     "{area_region}",
+    "Macro area: {area_macro}",
     "Strike records: {attack_rows}",
     "Active days: {active_days}",
     f"{region_launched_column}: " + "{" + region_launched_column + "}",
