@@ -4,7 +4,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from dashboard.data import ensure_gold_database, query
+from dashboard.date_queries import (
+    get_filtered_area_macros,
+    get_filtered_directional_macros,
+    get_filtered_region_map,
+)
+from dashboard.filters import get_selected_date_range
 from dashboard.maps import (
     add_map_marker_columns,
     pick_available_column,
@@ -15,14 +20,16 @@ from dashboard.maps import (
 
 st.title("Areas")
 st.caption("Target macro areas, directional summaries, and centroid maps.")
+selected_start, selected_end = get_selected_date_range()
+st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
 
-# Stop early if the pipeline has not built the gold database yet.
-ensure_gold_database()
+area_macros = get_filtered_area_macros(selected_start, selected_end)
+directional = get_filtered_directional_macros(selected_start, selected_end)
+region_map = get_filtered_region_map(selected_start, selected_end)
 
-# Load area-level marts from the gold layer.
-area_macros = query("SELECT * FROM vw_dashboard_area_macros")
-directional = query("SELECT * FROM vw_dashboard_directional_macros")
-region_map = query("SELECT * FROM vw_dashboard_region_map")
+if area_macros.empty and directional.empty and region_map.empty:
+    st.info("No area or map data was found in the selected date range.")
+    st.stop()
 
 # Combine target scopes for the main dashboard chart so each area macro appears only once.
 area_macros_chart = (

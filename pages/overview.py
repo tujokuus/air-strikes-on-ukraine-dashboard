@@ -3,39 +3,29 @@ from __future__ import annotations
 import plotly.express as px
 import streamlit as st
 
-from dashboard.data import ensure_gold_database, format_int, query
+from dashboard.data import format_int
+from dashboard.date_queries import (
+    get_filtered_area_macros,
+    get_filtered_daily_activity,
+    get_filtered_overview,
+    get_filtered_weapon_models,
+)
+from dashboard.filters import get_selected_date_range
 
 
 st.title("Air Strikes in Ukraine Analytics")
 st.caption("Trends, weapon activity, and target geography.")
+selected_start, selected_end = get_selected_date_range()
+st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
 
-# Stop early with a clear Streamlit error if the pipeline has not created gold.duckdb yet.
-ensure_gold_database()
+overview = get_filtered_overview(selected_start, selected_end)
+daily = get_filtered_daily_activity(selected_start, selected_end)
+weapon_models = get_filtered_weapon_models(selected_start, selected_end)
+area_macros = get_filtered_area_macros(selected_start, selected_end)
 
-# The overview view contains one row with high-level dashboard metrics.
-overview = query("SELECT * FROM vw_dashboard_overview").iloc[0]
-
-# Daily activity is ordered by date so Plotly draws the line chart chronologically.
-daily = query("SELECT * FROM vw_dashboard_daily_activity ORDER BY event_date")
-
-# Pull only the top models needed for the front-page summary.
-weapon_models = query(
-    """
-    SELECT weapon_model, weapon_category, launched_total, attack_rows
-    FROM vw_dashboard_weapon_models
-    ORDER BY launched_total DESC, attack_rows DESC
-    LIMIT 10
-    """
-)
-
-# Area macro totals summarize how much activity is nationwide vs more specific targets.
-area_macros = query(
-    """
-    SELECT area_macro, launched_total, attack_rows, launched_share_pct
-    FROM vw_dashboard_area_macros
-    ORDER BY launched_total DESC, attack_rows DESC
-    """
-)
+if daily.empty:
+    st.info("No events were found in the selected date range.")
+    st.stop()
 
 st.subheader("Overview")
 
@@ -106,18 +96,38 @@ fig.update_layout(xaxis_title="Date", yaxis_title="Count", legend_title_text="")
 st.plotly_chart(fig, use_container_width=True)
 
 left, right = st.columns(2)
+weapon_category_palette = ["#2d6a4f", "#9e1e1e", "#3a3a3a", "#b7791f", "#4a5568"]
+weapon_categories = sorted(weapon_models["weapon_category"].dropna().unique().tolist())
+weapon_category_colors = {
+    category: weapon_category_palette[index % len(weapon_category_palette)]
+    for index, category in enumerate(weapon_categories)
+}
+area_macros_chart = (
+    area_macros.groupby("area_macro", as_index=False)
+    .agg(
+        attack_rows=("attack_rows", "sum"),
+        launched_total=("launched_total", "sum"),
+    )
+    .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
+)
+area_total = area_macros_chart["launched_total"].sum()
+area_macros_chart["launched_share_pct"] = (
+    0.0
+    if area_total == 0
+    else (100.0 * area_macros_chart["launched_total"] / area_total).round(2)
+)
 
 with left:
     st.subheader("Top Weapon Models")
 
     # Sort ascending before plotting so the largest bar appears at the top of the horizontal chart.
     fig = px.bar(
-        weapon_models.sort_values("launched_total", ascending=True),
+        weapon_models.head(10).sort_values("launched_total", ascending=True),
         x="launched_total",
         y="weapon_model",
         color="weapon_category",
         orientation="h",
-        color_discrete_sequence=["#9e1e1e", "#2d6a4f", "#3a3a3a", "#b7791f", "#4a5568"],
+        color_discrete_map=weapon_category_colors,
         title="Launched total by weapon model",
     )
     fig.update_layout(xaxis_title="Launched total", yaxis_title="Weapon model", legend_title_text="")
@@ -128,7 +138,7 @@ with right:
 
     # The color scale highlights the largest target scopes without changing the underlying values.
     fig = px.bar(
-        area_macros,
+        area_macros_chart,
         x="area_macro",
         y="launched_total",
         text="launched_share_pct",

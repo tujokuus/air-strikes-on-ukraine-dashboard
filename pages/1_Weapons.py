@@ -3,18 +3,21 @@ from __future__ import annotations
 import plotly.express as px
 import streamlit as st
 
-from dashboard.data import ensure_gold_database, query
+from dashboard.date_queries import get_filtered_weapon_models, get_filtered_weapon_types
+from dashboard.filters import get_selected_date_range
 
 
 st.title("Weapons")
 st.caption("Weapon model and type summaries from the gold DuckDB layer.")
+selected_start, selected_end = get_selected_date_range()
+st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
 
-# Stop early if the pipeline has not built the gold database yet.
-ensure_gold_database()
+models = get_filtered_weapon_models(selected_start, selected_end)
+types = get_filtered_weapon_types(selected_start, selected_end)
 
-# These views are pre-aggregated in the gold layer for fast dashboard loading.
-models = query("SELECT * FROM vw_dashboard_weapon_models")
-types = query("SELECT * FROM vw_dashboard_weapon_types")
+if models.empty or types.empty:
+    st.info("No weapon data was found in the selected date range.")
+    st.stop()
 
 # Build filter choices from the data so new weapon categories appear automatically.
 categories = sorted(models["weapon_category"].dropna().unique().tolist())
