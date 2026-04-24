@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pandas as pd
@@ -86,22 +87,24 @@ def ensure_gold_database() -> None:
 
 
 @st.cache_data(show_spinner=False)
-def _query(sql: str, db_mtime_ns: int) -> pd.DataFrame:
+def _query(sql: str, db_mtime_ns: int, params: tuple[Any, ...] | None = None) -> pd.DataFrame:
     """Run a read-only DuckDB query and return the result as a pandas DataFrame."""
     ensure_gold_database()
 
     # Open a short-lived read-only connection so Streamlit reruns do not keep the database locked.
     connection = duckdb.connect(str(GOLD_DB_PATH), read_only=True)
     try:
+        if params:
+            return connection.execute(sql, params).df()
         return connection.execute(sql).df()
     finally:
         connection.close()
 
 
-def query(sql: str) -> pd.DataFrame:
+def query(sql: str, params: tuple[Any, ...] | None = None) -> pd.DataFrame:
     """Run a cached read-only query that refreshes automatically when gold.duckdb changes."""
     ensure_gold_database()
-    return _query(sql, GOLD_DB_PATH.stat().st_mtime_ns)
+    return _query(sql, GOLD_DB_PATH.stat().st_mtime_ns, params)
 
 
 def format_int(value: object) -> str:
