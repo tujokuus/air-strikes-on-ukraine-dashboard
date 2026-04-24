@@ -12,6 +12,36 @@ SELECT * FROM mart_daily_activity
 ORDER BY event_date;
 
 
+-- Daily weapon model view used for future date-range filtering and period rollups.
+CREATE OR REPLACE VIEW vw_dashboard_weapon_models_daily AS
+SELECT * FROM daily.mart_weapon_model_daily
+ORDER BY event_date, launched_total DESC, attack_rows DESC, weapon_model;
+
+
+-- Daily weapon type view used for future date-range filtering and period rollups.
+CREATE OR REPLACE VIEW vw_dashboard_weapon_types_daily AS
+SELECT * FROM daily.mart_weapon_type_daily
+ORDER BY event_date, launched_total DESC, attack_rows DESC, weapon_category, weapon_type;
+
+
+-- Daily area macro view used for future date-range filtering and period rollups.
+CREATE OR REPLACE VIEW vw_dashboard_area_macros_daily AS
+SELECT * FROM daily.mart_area_macro_daily
+ORDER BY event_date, launched_total DESC, attack_rows DESC, area_macro, target_scope;
+
+
+-- Daily directional macro view used for future date-range filtering and map rollups.
+CREATE OR REPLACE VIEW vw_dashboard_directional_macros_daily AS
+SELECT * FROM daily.mart_directional_macro_daily
+ORDER BY event_date, launched_total DESC, attack_rows DESC, area_macro;
+
+
+-- Daily region map view used for future date-range filtering and map rollups.
+CREATE OR REPLACE VIEW vw_dashboard_region_map_daily AS
+SELECT * FROM daily.mart_region_daily
+ORDER BY event_date, attack_rows DESC, launched_total_allocated DESC, area_region;
+
+
 -- Weapon model view used by top weapon model charts and coverage tables.
 CREATE OR REPLACE VIEW vw_dashboard_weapon_models AS
 SELECT * FROM mart_weapon_model_summary
