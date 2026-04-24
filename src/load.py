@@ -134,7 +134,11 @@ def write_gold_duckdb(
 
     connection = duckdb.connect(str(path))
     try:
-        files_to_run = sql_files or [SQL_DIR / "marts.sql", SQL_DIR / "views.sql"]
+        files_to_run = sql_files or [
+            SQL_DIR / "marts.sql",
+            SQL_DIR / "daily_marts.sql",
+            SQL_DIR / "views.sql",
+        ]
         _execute_sql_files(connection, files_to_run)
     finally:
         connection.close()
