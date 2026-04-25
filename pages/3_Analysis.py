@@ -15,6 +15,8 @@ from dashboard.date_queries import (
     get_filtered_overview,
     get_filtered_region_map,
     get_filtered_weapon_models,
+    get_weapon_category_over_time,
+    get_weapon_model_over_time,
 )
 from dashboard.filters import get_selected_date_range
 
@@ -254,6 +256,66 @@ def build_driver_frame(
     )
 
 
+def build_monthly_share_frame(
+    frame: pd.DataFrame,
+    group_columns: list[str],
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    monthly = frame.copy()
+    monthly["month_start"] = pd.to_datetime(monthly["event_date"]).dt.to_period("M").dt.to_timestamp()
+    aggregated = (
+        monthly.groupby(["month_start", *group_columns], as_index=False)[["launched_total"]]
+        .sum()
+        .sort_values(["month_start", *group_columns])
+    )
+    aggregated["share_pct"] = (
+        100.0
+        * aggregated["launched_total"]
+        / aggregated.groupby("month_start")["launched_total"].transform("sum").replace({0: pd.NA})
+    ).fillna(0.0).round(2)
+    return aggregated
+
+
+def add_rolling_share(
+    frame: pd.DataFrame,
+    key_columns: list[str],
+    window: int = 3,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    rolling = frame.sort_values(["month_start", *key_columns]).copy()
+    rolling[f"share_pct_{window}m_avg"] = (
+        rolling.groupby(key_columns)["share_pct"]
+        .transform(lambda series: series.rolling(window, min_periods=window).mean())
+        .round(2)
+    )
+    return rolling
+
+
+def find_first_share_threshold(
+    frame: pd.DataFrame,
+    key_column: str,
+    key_value: str,
+    threshold: float,
+    value_column: str = "share_pct",
+) -> pd.Timestamp | None:
+    if frame.empty:
+        return None
+    hits = frame[(frame[key_column] == key_value) & (frame[value_column] >= threshold)]
+    if hits.empty:
+        return None
+    return pd.Timestamp(hits.iloc[0]["month_start"])
+
+
+def format_month_year(value: pd.Timestamp | None) -> str:
+    if value is None or pd.isna(value):
+        return "not reached in this dataset"
+    return pd.Timestamp(value).strftime("%m.%Y")
+
+
 def render_insight_card(title: str, body: str) -> None:
     st.markdown(
         f"""
@@ -294,6 +356,8 @@ daily = get_filtered_daily_activity(selected_start, selected_end)
 weapon_models = get_filtered_weapon_models(selected_start, selected_end)
 area_macros = get_filtered_area_macros(selected_start, selected_end)
 region_map = get_filtered_region_map(selected_start, selected_end)
+full_category_history = get_weapon_category_over_time()
+full_model_history = get_weapon_model_over_time()
 
 if daily.empty:
     st.info("No analysis data was found in the selected date range.")
@@ -338,6 +402,37 @@ top_models_chart["cumulative_share_pct"] = top_models_chart["launched_share_pct"
 area_macros_chart = build_area_macro_chart(area_macros)
 region_focus = build_region_focus(region_map)
 
+monthly_category_history = build_monthly_share_frame(full_category_history, ["weapon_category"])
+monthly_category_history = add_rolling_share(monthly_category_history, ["weapon_category"], window=3)
+monthly_model_history = build_monthly_share_frame(full_model_history, ["weapon_model"])
+monthly_model_history = add_rolling_share(monthly_model_history, ["weapon_model"], window=3)
+shahed_established_month = find_first_share_threshold(
+    monthly_model_history,
+    "weapon_model",
+    "Shahed-136/131",
+    50.0,
+    value_column="share_pct_3m_avg",
+)
+shahed_dominant_month = find_first_share_threshold(
+    monthly_model_history,
+    "weapon_model",
+    "Shahed-136/131",
+    70.0,
+    value_column="share_pct_3m_avg",
+)
+uav_established_month = find_first_share_threshold(
+    monthly_category_history,
+    "weapon_category",
+    "UAV",
+    50.0,
+    value_column="share_pct_3m_avg",
+)
+history_start_month = (
+    None
+    if monthly_category_history.empty
+    else pd.Timestamp(monthly_category_history["month_start"].min())
+)
+
 top_macro = area_macros_chart.iloc[0] if not area_macros_chart.empty else None
 top_region = region_focus.iloc[0] if not region_focus.empty else None
 
@@ -352,7 +447,7 @@ tabs = st.tabs(["Summary", "Weapons", "Geography"])
 
 with tabs[0]:
     st.subheader("Key Findings")
-    insight_cols = st.columns(3)
+    insight_cols = st.columns(4)
 
     tempo_body = (
         f"Peak pressure came on {peak_day['event_date']:%d.%m.%Y} with "
@@ -373,11 +468,21 @@ with tabs[0]:
         "No mapped region data was available for this range."
         if top_macro is None or top_region is None
         else (
-            f"{top_macro['area_macro']} was the largest macro area with "
-            f"{format_int(top_macro['launched_total'])} launched "
-            f"({top_macro['launched_share_pct']:.1f}% share). "
+        #    f"{top_macro['area_macro']} was the largest macro area with "
+        #    f"{format_int(top_macro['launched_total'])} launched "
+        #    f"({top_macro['launched_share_pct']:.1f}% share). "
             f"{top_region['reporting_region']} led mapped regions with "
-            f"{format_decimal(top_region['launched_total_allocated'], 1)} allocated launches."
+            f"{format_decimal(top_region['launched_total_allocated'], 0)} allocated launches."
+        )
+    )
+    adoption_body = (
+        "Long-run adoption milestones were not available."
+        if history_start_month is None
+        else (
+        #    f"Dataset coverage starts in {format_month_year(history_start_month)}. "
+            f"Shahed-136/131 moved above 50% on a 3-month average in {format_month_year(shahed_established_month)}"
+            f" and above 70% in {format_month_year(shahed_dominant_month)}. "
+            f"UAV crossed 50% on a 3-month average in {format_month_year(uav_established_month)}."
         )
     )
 
@@ -387,6 +492,8 @@ with tabs[0]:
         render_insight_card("Weapon Mix", weapon_body)
     with insight_cols[2]:
         render_insight_card("Geography", geography_body)
+    with insight_cols[3]:
+        render_insight_card("Shahed", adoption_body)
 
     st.subheader("Period over Period")
     comparison_range = st.date_input(

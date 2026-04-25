@@ -34,6 +34,12 @@ END
 """
 
 
+def _optional_date_filter(start_date: date | None, end_date: date | None) -> tuple[str, tuple[object, ...]]:
+    if start_date is None or end_date is None:
+        return "", ()
+    return "WHERE event_date BETWEEN ? AND ?", (start_date, end_date)
+
+
 def get_filtered_overview(start_date: date, end_date: date) -> pd.Series:
     """Return overview metrics for the selected global date range."""
     return query(
@@ -217,6 +223,101 @@ def get_filtered_weapon_types(start_date: date, end_date: date) -> pd.DataFrame:
         ORDER BY launched_total DESC, attack_rows DESC, weapon_category, weapon_type
         """,
         (start_date, end_date),
+    )
+
+
+def get_weapon_category_over_time(
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Return daily weapon-category totals and share for the selected range or full history."""
+    where_clause, params = _optional_date_filter(start_date, end_date)
+    return query(
+        f"""
+        WITH aggregated AS (
+            SELECT
+                event_date,
+                weapon_category,
+                SUM(attack_rows) AS attack_rows,
+                SUM(launched_total) AS launched_total,
+                SUM(destroyed_total) AS destroyed_total
+            FROM vw_dashboard_weapon_models_daily
+            {where_clause}
+            GROUP BY 1, 2
+        )
+        SELECT
+            event_date,
+            weapon_category,
+            attack_rows,
+            launched_total,
+            destroyed_total,
+            ROUND(100.0 * launched_total / NULLIF(SUM(launched_total) OVER (PARTITION BY event_date), 0), 2) AS launched_share_pct
+        FROM aggregated
+        ORDER BY event_date, launched_total DESC, weapon_category
+        """,
+        params,
+    )
+
+
+def get_weapon_type_over_time(
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Return daily weapon-type totals for the selected range or full history."""
+    where_clause, params = _optional_date_filter(start_date, end_date)
+    return query(
+        f"""
+        WITH aggregated AS (
+            SELECT
+                event_date,
+                weapon_category,
+                weapon_type,
+                SUM(attack_rows) AS attack_rows,
+                SUM(launched_total) AS launched_total,
+                SUM(destroyed_total) AS destroyed_total
+            FROM vw_dashboard_weapon_types_daily
+            {where_clause}
+            GROUP BY 1, 2, 3
+        )
+        SELECT
+            event_date,
+            weapon_category,
+            weapon_type,
+            attack_rows,
+            launched_total,
+            destroyed_total,
+            ROUND(100.0 * launched_total / NULLIF(SUM(launched_total) OVER (PARTITION BY event_date), 0), 2) AS total_share_pct,
+            ROUND(100.0 * launched_total / NULLIF(SUM(launched_total) OVER (PARTITION BY event_date, weapon_category), 0), 2) AS category_share_pct
+        FROM aggregated
+        ORDER BY event_date, weapon_category, launched_total DESC, weapon_type
+        """,
+        params,
+    )
+
+
+def get_weapon_model_over_time(
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> pd.DataFrame:
+    """Return daily weapon-model totals for the selected range or full history."""
+    where_clause, params = _optional_date_filter(start_date, end_date)
+    return query(
+        f"""
+        SELECT
+            event_date,
+            weapon_model_key,
+            weapon_model,
+            weapon_category,
+            weapon_type,
+            SUM(attack_rows) AS attack_rows,
+            SUM(launched_total) AS launched_total,
+            SUM(destroyed_total) AS destroyed_total
+        FROM vw_dashboard_weapon_models_daily
+        {where_clause}
+        GROUP BY 1, 2, 3, 4, 5
+        ORDER BY event_date, launched_total DESC, weapon_model
+        """,
+        params,
     )
 
 
