@@ -1,0 +1,391 @@
+from __future__ import annotations
+
+import html
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+from dashboard.data import format_int
+from dashboard.date_queries import (
+    get_filtered_area_macros,
+    get_filtered_daily_activity,
+    get_filtered_overview,
+    get_filtered_region_map,
+    get_filtered_weapon_models,
+)
+from dashboard.filters import get_selected_date_range
+
+
+def safe_pct(numerator: float, denominator: float) -> float:
+    if not denominator:
+        return 0.0
+    return 100.0 * numerator / denominator
+
+
+def format_decimal(value: float, digits: int = 1) -> str:
+    return f"{value:,.{digits}f}"
+
+
+def render_insight_card(title: str, body: str) -> None:
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid #dbe3ea;
+            border-radius: 8px;
+            padding: 0.95rem 1rem;
+            min-height: 155px;
+            background: #fbfdff;
+        ">
+            <div style="
+                font-size: 0.8rem;
+                font-weight: 700;
+                color: #475569;
+                text-transform: uppercase;
+                letter-spacing: 0;
+            ">{html.escape(title)}</div>
+            <div style="
+                margin-top: 0.55rem;
+                font-size: 0.98rem;
+                line-height: 1.5;
+                color: #0f172a;
+            ">{html.escape(body)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+st.title("Analysis")
+st.caption("Interpretive readouts for tempo, weapon concentration, and target geography.")
+selected_start, selected_end = get_selected_date_range()
+st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
+
+overview = get_filtered_overview(selected_start, selected_end)
+daily = get_filtered_daily_activity(selected_start, selected_end)
+weapon_models = get_filtered_weapon_models(selected_start, selected_end)
+area_macros = get_filtered_area_macros(selected_start, selected_end)
+region_map = get_filtered_region_map(selected_start, selected_end)
+
+if daily.empty:
+    st.info("No analysis data was found in the selected date range.")
+    st.stop()
+
+overall_success_pct = safe_pct(float(overview["total_destroyed"]), float(overview["total_launched"]))
+avg_daily_launched = daily["launched_total"].mean()
+avg_daily_destroyed = daily["destroyed_total"].mean()
+
+daily = daily.copy()
+daily["air_defense_success_pct"] = (
+    100.0 * daily["destroyed_total"] / daily["launched_total"].replace({0: pd.NA})
+).round(2)
+daily["launched_7d"] = daily["launched_total"].rolling(7, min_periods=1).mean()
+daily["destroyed_7d"] = daily["destroyed_total"].rolling(7, min_periods=1).mean()
+
+peak_day = daily.sort_values(["launched_total", "destroyed_total"], ascending=[False, False]).iloc[0]
+peak_multiplier = 0.0 if avg_daily_launched == 0 else peak_day["launched_total"] / avg_daily_launched
+
+top_model = weapon_models.iloc[0] if not weapon_models.empty else None
+top_three_share = weapon_models.head(3)["launched_share_pct"].sum() if not weapon_models.empty else 0.0
+
+weapon_category_mix = (
+    weapon_models.groupby("weapon_category", as_index=False)
+    .agg(
+        launched_total=("launched_total", "sum"),
+        destroyed_total=("destroyed_total", "sum"),
+        attack_rows=("attack_rows", "sum"),
+    )
+    .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
+)
+weapon_category_mix["launched_share_pct"] = (
+    100.0
+    * weapon_category_mix["launched_total"]
+    / weapon_category_mix["launched_total"].sum()
+).round(2)
+
+top_models_chart = weapon_models.head(10).copy()
+top_models_chart["cumulative_share_pct"] = top_models_chart["launched_share_pct"].cumsum().round(2)
+
+area_macros_chart = (
+    area_macros.groupby("area_macro", as_index=False)
+    .agg(
+        attack_rows=("attack_rows", "sum"),
+        active_days=("active_days", "max"),
+        launched_total=("launched_total", "sum"),
+        destroyed_total=("destroyed_total", "sum"),
+    )
+    .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
+)
+area_macros_chart["launched_share_pct"] = (
+    100.0
+    * area_macros_chart["launched_total"]
+    / area_macros_chart["launched_total"].sum()
+).round(2)
+
+region_focus = region_map.copy()
+if not region_focus.empty:
+    region_total_allocated = region_focus["launched_total_allocated"].sum()
+    region_focus["allocated_share_pct"] = (
+        100.0 * region_focus["launched_total_allocated"] / region_total_allocated
+    ).round(2)
+    region_focus = region_focus.sort_values(
+        ["launched_total_allocated", "attack_rows"],
+        ascending=[False, False],
+    )
+else:
+    region_focus["allocated_share_pct"] = pd.Series(dtype="float64")
+
+top_macro = area_macros_chart.iloc[0] if not area_macros_chart.empty else None
+top_region = region_focus.iloc[0] if not region_focus.empty else None
+
+summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+summary_col1.metric("Attack rows", format_int(overview["total_attack_rows"]))
+summary_col2.metric("Launched total", format_int(overview["total_launched"]))
+summary_col3.metric("Destroyed total", format_int(overview["total_destroyed"]))
+summary_col4.metric("Air defense success", f"{overall_success_pct:.1f}%")
+summary_col5.metric("Active days", format_int(overview["distinct_event_dates"]))
+
+tabs = st.tabs(["Summary", "Weapons", "Geography"])
+
+with tabs[0]:
+    st.subheader("Key Findings")
+    insight_cols = st.columns(3)
+
+    tempo_body = (
+        f"Peak pressure came on {peak_day['event_date']:%d.%m.%Y} with "
+        f"{format_int(peak_day['launched_total'])} launched. That is "
+        f"{peak_multiplier:.1f}x the period average of {format_decimal(avg_daily_launched, 1)} per active day."
+    )
+    weapon_body = (
+        "No weapon model data was available for this range."
+        if top_model is None
+        else (
+            f"{top_model['weapon_model']} was the largest single model with "
+            f"{format_int(top_model['launched_total'])} launched "
+            f"({top_model['launched_share_pct']:.1f}% share). "
+            f"The top three models combined accounted for {top_three_share:.1f}%."
+        )
+    )
+    geography_body = (
+        "No mapped region data was available for this range."
+        if top_macro is None or top_region is None
+        else (
+            f"{top_macro['area_macro']} was the largest macro area with "
+            f"{format_int(top_macro['launched_total'])} launched "
+            f"({top_macro['launched_share_pct']:.1f}% share). "
+            f"{top_region['reporting_region']} led mapped regions with "
+            f"{format_decimal(top_region['launched_total_allocated'], 1)} allocated launches."
+        )
+    )
+
+    with insight_cols[0]:
+        render_insight_card("Tempo", tempo_body)
+    with insight_cols[1]:
+        render_insight_card("Weapon Mix", weapon_body)
+    with insight_cols[2]:
+        render_insight_card("Geography", geography_body)
+
+    st.subheader("Operational Tempo")
+    tempo_fig = go.Figure()
+    tempo_fig.add_scatter(
+        x=daily["event_date"],
+        y=daily["launched_total"],
+        mode="lines",
+        name="Daily launched",
+        line=dict(color="#9e1e1e", width=1.5),
+        opacity=0.45,
+    )
+    tempo_fig.add_scatter(
+        x=daily["event_date"],
+        y=daily["destroyed_total"],
+        mode="lines",
+        name="Daily destroyed",
+        line=dict(color="#2d6a4f", width=1.5),
+        opacity=0.45,
+    )
+    tempo_fig.add_scatter(
+        x=daily["event_date"],
+        y=daily["launched_7d"],
+        mode="lines",
+        name="7-day launched avg",
+        line=dict(color="#7f1d1d", width=3),
+    )
+    tempo_fig.add_scatter(
+        x=daily["event_date"],
+        y=daily["destroyed_7d"],
+        mode="lines",
+        name="7-day destroyed avg",
+        line=dict(color="#166534", width=3),
+    )
+    tempo_fig.update_layout(
+        title="Daily pressure with 7-day smoothing",
+        xaxis_title="Date",
+        yaxis_title="Count",
+        legend_title_text="",
+    )
+    st.plotly_chart(tempo_fig, use_container_width=True)
+
+    st.subheader("Highest-pressure Days")
+    surge_days = (
+        daily.sort_values(["launched_total", "destroyed_total"], ascending=[False, False])
+        .head(10)
+        .loc[:, ["event_date", "launched_total", "destroyed_total", "air_defense_success_pct"]]
+        .rename(
+            columns={
+                "event_date": "Date",
+                "launched_total": "Launched total",
+                "destroyed_total": "Destroyed total",
+                "air_defense_success_pct": "Air defense success %",
+            }
+        )
+    )
+    st.dataframe(surge_days, use_container_width=True, hide_index=True)
+
+with tabs[1]:
+    st.subheader("Weapon Category Mix")
+    category_fig = px.bar(
+        weapon_category_mix.sort_values("launched_total", ascending=True),
+        x="launched_total",
+        y="weapon_category",
+        orientation="h",
+        text="launched_share_pct",
+        color="launched_total",
+        color_continuous_scale=["#e5eef8", "#91b6db", "#3c79b8", "#1d4f91"],
+        labels={
+            "weapon_category": "Weapon category",
+            "launched_total": "Launched total",
+            "launched_share_pct": "Launched share %",
+        },
+        title="Launched total by weapon category",
+    )
+    category_fig.update_layout(xaxis_title="Launched total", yaxis_title="Weapon category", coloraxis_showscale=False)
+    st.plotly_chart(category_fig, use_container_width=True)
+
+    st.subheader("Top Model Concentration")
+    concentration_fig = go.Figure()
+    concentration_fig.add_bar(
+        x=top_models_chart["weapon_model"],
+        y=top_models_chart["launched_share_pct"],
+        name="Launched share %",
+        marker_color="#9e1e1e",
+    )
+    concentration_fig.add_scatter(
+        x=top_models_chart["weapon_model"],
+        y=top_models_chart["cumulative_share_pct"],
+        mode="lines+markers",
+        name="Cumulative share %",
+        line=dict(color="#1d4f91", width=3),
+        yaxis="y2",
+    )
+    concentration_fig.update_layout(
+        title="Top model share and cumulative concentration",
+        xaxis_title="Weapon model",
+        yaxis=dict(title="Launched share %"),
+        yaxis2=dict(title="Cumulative share %", overlaying="y", side="right", range=[0, 100]),
+        legend_title_text="",
+    )
+    st.plotly_chart(concentration_fig, use_container_width=True)
+
+    st.subheader("Model Watchlist")
+    st.dataframe(
+        weapon_models.head(12)[
+            [
+                "weapon_model",
+                "weapon_category",
+                "weapon_type",
+                "launched_total",
+                "launched_share_pct",
+                "destroyed_to_launched_pct",
+            ]
+        ].rename(
+            columns={
+                "weapon_model": "Weapon model",
+                "weapon_category": "Category",
+                "weapon_type": "Type",
+                "launched_total": "Launched total",
+                "launched_share_pct": "Launched share %",
+                "destroyed_to_launched_pct": "Destroyed / launched %",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+with tabs[2]:
+    st.subheader("Macro-area Weight")
+    geography_col1, geography_col2 = st.columns(2)
+
+    with geography_col1:
+        macro_fig = px.bar(
+            area_macros_chart,
+            x="area_macro",
+            y="launched_total",
+            text="launched_share_pct",
+            color="launched_total",
+            color_continuous_scale=["#fee2e2", "#fca5a5", "#ef4444", "#991b1b"],
+            labels={
+                "area_macro": "Area macro",
+                "launched_total": "Launched total",
+                "launched_share_pct": "Launched share %",
+            },
+            title="Launched total by macro area",
+        )
+        macro_fig.update_layout(
+            xaxis_title="Area macro",
+            yaxis_title="Launched total",
+            coloraxis_showscale=False,
+        )
+        st.plotly_chart(macro_fig, use_container_width=True)
+
+    with geography_col2:
+        top_regions_chart = region_focus.head(10).sort_values("launched_total_allocated", ascending=True)
+        region_fig = px.bar(
+            top_regions_chart,
+            x="launched_total_allocated",
+            y="reporting_region",
+            color="area_macro",
+            orientation="h",
+            text="allocated_share_pct",
+            labels={
+                "reporting_region": "Reporting region",
+                "launched_total_allocated": "Allocated launched total",
+                "allocated_share_pct": "Allocated share %",
+                "area_macro": "Macro area",
+            },
+            title="Top mapped regions by allocated launched total",
+        )
+        region_fig.update_layout(
+            xaxis_title="Allocated launched total",
+            yaxis_title="Reporting region",
+            legend_title_text="",
+        )
+        st.plotly_chart(region_fig, use_container_width=True)
+
+    st.subheader("Region Focus Table")
+    if region_focus.empty:
+        st.info("No mapped region rows were available in the selected date range.")
+    else:
+        st.dataframe(
+            region_focus.head(12)[
+                [
+                    "reporting_region",
+                    "area_macro",
+                    "attack_rows",
+                    "launched_total_allocated",
+                    "launched_total_exploded",
+                    "allocated_share_pct",
+                ]
+            ].rename(
+                columns={
+                    "reporting_region": "Reporting region",
+                    "area_macro": "Macro area",
+                    "attack_rows": "Strike records",
+                    "launched_total_allocated": "Allocated launched total",
+                    "launched_total_exploded": "Exploded launched total",
+                    "allocated_share_pct": "Allocated share %",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
