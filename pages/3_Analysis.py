@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
@@ -26,6 +27,82 @@ def safe_pct(numerator: float, denominator: float) -> float:
 
 def format_decimal(value: float, digits: int = 1) -> str:
     return f"{value:,.{digits}f}"
+
+
+def format_delta(value: float, digits: int = 0, suffix: str = "") -> str:
+    if digits == 0:
+        return f"{int(round(value)):+,}{suffix}"
+    return f"{value:+,.{digits}f}{suffix}"
+
+
+def format_change_with_pct(
+    current: float,
+    previous: float,
+    digits: int = 0,
+    suffix: str = "",
+    pct_digits: int = 1,
+) -> str:
+    absolute_delta = format_delta(current - previous, digits=digits, suffix=suffix)
+    if previous == 0:
+        percent_delta = "0.0%" if current == 0 else "n/a"
+    else:
+        percent_delta = f"{(100.0 * (current - previous) / previous):+,.{pct_digits}f}%"
+    return f"{absolute_delta} ({percent_delta})"
+
+
+def get_previous_period_range(start_date: date, end_date: date) -> tuple[date, date]:
+    period_days = (end_date - start_date).days + 1
+    previous_end = start_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days - 1)
+    return previous_start, previous_end
+
+
+def build_area_macro_chart(area_macros: pd.DataFrame) -> pd.DataFrame:
+    if area_macros.empty:
+        return pd.DataFrame(
+            columns=[
+                "area_macro",
+                "attack_rows",
+                "active_days",
+                "launched_total",
+                "destroyed_total",
+                "launched_share_pct",
+            ]
+        )
+
+    chart = (
+        area_macros.groupby("area_macro", as_index=False)
+        .agg(
+            attack_rows=("attack_rows", "sum"),
+            active_days=("active_days", "max"),
+            launched_total=("launched_total", "sum"),
+            destroyed_total=("destroyed_total", "sum"),
+        )
+        .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
+    )
+    total_launched = chart["launched_total"].sum()
+    chart["launched_share_pct"] = (
+        0.0 if total_launched == 0 else (100.0 * chart["launched_total"] / total_launched).round(2)
+    )
+    return chart
+
+
+def build_region_focus(region_map: pd.DataFrame) -> pd.DataFrame:
+    region_focus = region_map.copy()
+    if region_focus.empty:
+        region_focus["allocated_share_pct"] = pd.Series(dtype="float64")
+        return region_focus
+
+    region_total_allocated = region_focus["launched_total_allocated"].sum()
+    region_focus["allocated_share_pct"] = (
+        0.0
+        if region_total_allocated == 0
+        else (100.0 * region_focus["launched_total_allocated"] / region_total_allocated).round(2)
+    )
+    return region_focus.sort_values(
+        ["launched_total_allocated", "attack_rows"],
+        ascending=[False, False],
+    )
 
 
 def render_insight_card(title: str, body: str) -> None:
@@ -60,13 +137,34 @@ def render_insight_card(title: str, body: str) -> None:
 st.title("Analysis")
 st.caption("Interpretive readouts for tempo, weapon concentration, and target geography.")
 selected_start, selected_end = get_selected_date_range()
+default_comparison_start, default_comparison_end = get_previous_period_range(selected_start, selected_end)
 st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
+comparison_range = st.date_input(
+    "Comparison range",
+    value=(default_comparison_start, default_comparison_end),
+    key="analysis_comparison_range",
+)
+
+if isinstance(comparison_range, tuple):
+    if len(comparison_range) != 2:
+        st.info("Select both start and end dates for the comparison range.")
+        st.stop()
+    comparison_start, comparison_end = comparison_range
+else:
+    comparison_start = comparison_end = comparison_range
+
+st.caption(f"Comparison range: {comparison_start:%d.%m.%Y} - {comparison_end:%d.%m.%Y}")
 
 overview = get_filtered_overview(selected_start, selected_end)
 daily = get_filtered_daily_activity(selected_start, selected_end)
 weapon_models = get_filtered_weapon_models(selected_start, selected_end)
 area_macros = get_filtered_area_macros(selected_start, selected_end)
 region_map = get_filtered_region_map(selected_start, selected_end)
+previous_overview = get_filtered_overview(comparison_start, comparison_end)
+previous_daily = get_filtered_daily_activity(comparison_start, comparison_end)
+previous_weapon_models = get_filtered_weapon_models(comparison_start, comparison_end)
+previous_area_macros = get_filtered_area_macros(comparison_start, comparison_end)
+previous_region_map = get_filtered_region_map(comparison_start, comparison_end)
 
 if daily.empty:
     st.info("No analysis data was found in the selected date range.")
@@ -75,6 +173,12 @@ if daily.empty:
 overall_success_pct = safe_pct(float(overview["total_destroyed"]), float(overview["total_launched"]))
 avg_daily_launched = daily["launched_total"].mean()
 avg_daily_destroyed = daily["destroyed_total"].mean()
+previous_overall_success_pct = safe_pct(
+    float(previous_overview["total_destroyed"]),
+    float(previous_overview["total_launched"]),
+)
+previous_avg_daily_launched = previous_daily["launched_total"].mean() if not previous_daily.empty else 0.0
+previous_avg_daily_destroyed = previous_daily["destroyed_total"].mean() if not previous_daily.empty else 0.0
 
 daily = daily.copy()
 daily["air_defense_success_pct"] = (
@@ -88,6 +192,12 @@ peak_multiplier = 0.0 if avg_daily_launched == 0 else peak_day["launched_total"]
 
 top_model = weapon_models.iloc[0] if not weapon_models.empty else None
 top_three_share = weapon_models.head(3)["launched_share_pct"].sum() if not weapon_models.empty else 0.0
+previous_top_model = previous_weapon_models.iloc[0] if not previous_weapon_models.empty else None
+previous_top_three_share = (
+    previous_weapon_models.head(3)["launched_share_pct"].sum()
+    if not previous_weapon_models.empty
+    else 0.0
+)
 
 weapon_category_mix = (
     weapon_models.groupby("weapon_category", as_index=False)
@@ -107,40 +217,18 @@ weapon_category_mix["launched_share_pct"] = (
 top_models_chart = weapon_models.head(10).copy()
 top_models_chart["cumulative_share_pct"] = top_models_chart["launched_share_pct"].cumsum().round(2)
 
-area_macros_chart = (
-    area_macros.groupby("area_macro", as_index=False)
-    .agg(
-        attack_rows=("attack_rows", "sum"),
-        active_days=("active_days", "max"),
-        launched_total=("launched_total", "sum"),
-        destroyed_total=("destroyed_total", "sum"),
-    )
-    .sort_values(["launched_total", "attack_rows"], ascending=[False, False])
-)
-area_macros_chart["launched_share_pct"] = (
-    100.0
-    * area_macros_chart["launched_total"]
-    / area_macros_chart["launched_total"].sum()
-).round(2)
-
-region_focus = region_map.copy()
-if not region_focus.empty:
-    region_total_allocated = region_focus["launched_total_allocated"].sum()
-    region_focus["allocated_share_pct"] = (
-        100.0 * region_focus["launched_total_allocated"] / region_total_allocated
-    ).round(2)
-    region_focus = region_focus.sort_values(
-        ["launched_total_allocated", "attack_rows"],
-        ascending=[False, False],
-    )
-else:
-    region_focus["allocated_share_pct"] = pd.Series(dtype="float64")
+area_macros_chart = build_area_macro_chart(area_macros)
+previous_area_macros_chart = build_area_macro_chart(previous_area_macros)
+region_focus = build_region_focus(region_map)
+previous_region_focus = build_region_focus(previous_region_map)
 
 top_macro = area_macros_chart.iloc[0] if not area_macros_chart.empty else None
 top_region = region_focus.iloc[0] if not region_focus.empty else None
+previous_top_macro = previous_area_macros_chart.iloc[0] if not previous_area_macros_chart.empty else None
+previous_top_region = previous_region_focus.iloc[0] if not previous_region_focus.empty else None
 
 summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
-summary_col1.metric("Attack rows", format_int(overview["total_attack_rows"]))
+summary_col1.metric("Strikes", format_int(overview["total_attack_rows"]))
 summary_col2.metric("Launched total", format_int(overview["total_launched"]))
 summary_col3.metric("Destroyed total", format_int(overview["total_destroyed"]))
 summary_col4.metric("Air defense success", f"{overall_success_pct:.1f}%")
@@ -185,6 +273,113 @@ with tabs[0]:
         render_insight_card("Weapon Mix", weapon_body)
     with insight_cols[2]:
         render_insight_card("Geography", geography_body)
+
+    st.subheader("Period over Period")
+    st.caption(f"Comparison period: {comparison_start:%d.%m.%Y} - {comparison_end:%d.%m.%Y}")
+
+    pop_cols = st.columns(5)
+    pop_cols[0].metric(
+        "Strikes",
+        format_int(overview["total_attack_rows"]),
+        delta=format_change_with_pct(
+            float(overview["total_attack_rows"]),
+            float(previous_overview["total_attack_rows"]),
+        ),
+    )
+    pop_cols[1].metric(
+        "Launched total",
+        format_int(overview["total_launched"]),
+        delta=format_change_with_pct(
+            float(overview["total_launched"]),
+            float(previous_overview["total_launched"]),
+        ),
+    )
+    pop_cols[2].metric(
+        "Destroyed total",
+        format_int(overview["total_destroyed"]),
+        delta=format_change_with_pct(
+            float(overview["total_destroyed"]),
+            float(previous_overview["total_destroyed"]),
+        ),
+    )
+    pop_cols[3].metric(
+        "Air defense success",
+        f"{overall_success_pct:.1f}%",
+        delta=format_change_with_pct(
+            overall_success_pct,
+            previous_overall_success_pct,
+            digits=1,
+            suffix=" pp",
+        ),
+    )
+    pop_cols[4].metric(
+        "Avg launched / active day",
+        format_decimal(avg_daily_launched, 1),
+        delta=format_change_with_pct(
+            avg_daily_launched,
+            previous_avg_daily_launched,
+            digits=1,
+        ),
+    )
+
+    comparison_frame = pd.DataFrame(
+        [
+            {"Period": "Selected", "Metric": "Strikes", "Value": float(overview["total_attack_rows"])},
+            {"Period": "Previous", "Metric": "Strikes", "Value": float(previous_overview["total_attack_rows"])},
+            {"Period": "Selected", "Metric": "Launched total", "Value": float(overview["total_launched"])},
+            {"Period": "Previous", "Metric": "Launched total", "Value": float(previous_overview["total_launched"])},
+            {"Period": "Selected", "Metric": "Destroyed total", "Value": float(overview["total_destroyed"])},
+            {"Period": "Previous", "Metric": "Destroyed total", "Value": float(previous_overview["total_destroyed"])},
+            {"Period": "Selected", "Metric": "Avg launched / active day", "Value": float(avg_daily_launched)},
+            {"Period": "Previous", "Metric": "Avg launched / active day", "Value": float(previous_avg_daily_launched)},
+        ]
+    )
+    comparison_fig = px.bar(
+        comparison_frame,
+        x="Metric",
+        y="Value",
+        color="Period",
+        barmode="group",
+        color_discrete_map={"Selected": "#9e1e1e", "Previous": "#64748b"},
+        title="Selected period vs comparison period",
+    )
+    comparison_fig.update_layout(xaxis_title="", yaxis_title="Value", legend_title_text="")
+    st.plotly_chart(comparison_fig, use_container_width=True)
+
+    comparison_insight_cols = st.columns(3)
+    top_model_shift_body = (
+        "No previous weapon-model data was available for the comparison period."
+        if previous_top_model is None or top_model is None
+        else (
+            f"Top model shifted from {previous_top_model['weapon_model']} "
+            f"({format_int(previous_top_model['launched_total'])} launched) to "
+            f"{top_model['weapon_model']} ({format_int(top_model['launched_total'])} launched). "
+            f"Top-three concentration moved from {previous_top_three_share:.1f}% to {top_three_share:.1f}%."
+        )
+    )
+    tempo_shift_body = (
+        f"Average launched per active day moved from {format_decimal(previous_avg_daily_launched, 1)} "
+        f"to {format_decimal(avg_daily_launched, 1)}, while average destroyed moved from "
+        f"{format_decimal(previous_avg_daily_destroyed, 1)} to {format_decimal(avg_daily_destroyed, 1)}."
+    )
+    geography_shift_body = (
+        "No previous mapped region data was available for the comparison period."
+        if previous_top_macro is None or previous_top_region is None or top_macro is None or top_region is None
+        else (
+            f"Leading macro area moved from {previous_top_macro['area_macro']} "
+            f"({previous_top_macro['launched_share_pct']:.1f}% share) to "
+            f"{top_macro['area_macro']} ({top_macro['launched_share_pct']:.1f}% share). "
+            f"Top mapped region moved from {previous_top_region['reporting_region']} to "
+            f"{top_region['reporting_region']}."
+        )
+    )
+
+    with comparison_insight_cols[0]:
+        render_insight_card("Tempo Shift", tempo_shift_body)
+    with comparison_insight_cols[1]:
+        render_insight_card("Model Shift", top_model_shift_body)
+    with comparison_insight_cols[2]:
+        render_insight_card("Geography Shift", geography_shift_body)
 
     st.subheader("Operational Tempo")
     tempo_fig = go.Figure()
@@ -380,7 +575,7 @@ with tabs[2]:
                 columns={
                     "reporting_region": "Reporting region",
                     "area_macro": "Macro area",
-                    "attack_rows": "Strike records",
+                    "attack_rows": "Strikes",
                     "launched_total_allocated": "Allocated launched total",
                     "launched_total_exploded": "Exploded launched total",
                     "allocated_share_pct": "Allocated share %",
