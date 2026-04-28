@@ -2,7 +2,8 @@
 
 Analytics project for exploring reported missile and UAV strike activity in the war in Ukraine. The project builds a lightweight local data pipeline with Python, DuckDB, SQL, and Streamlit, then serves dashboard-ready marts through an interactive web app.
 
-Live dashboard: [https://strikes-on-ukraine-analysis.streamlit.app/](https://strikes-on-ukraine-analysis.streamlit.app/)
+- Live dashboard: [https://strikes-on-ukraine-analysis.streamlit.app/](https://strikes-on-ukraine-analysis.streamlit.app/)
+- Product Backlog: [Google Sheets backlog](https://docs.google.com/spreadsheets/d/1dJnwIyfNNKBvxQJa0GBG62zLGKrf48YhoRG3_N_p24s/edit?usp=sharing)
 
 The dashboard focuses on:
 
@@ -100,34 +101,67 @@ The gold database contains physical mart tables and dashboard-facing views.
 
 ## Main Gold Tables
 
-The SQL marts are created in `sql/marts.sql`.
+The gold layer is split into summary marts in `sql/marts.sql`, daily marts in `sql/daily_marts.sql`, and dashboard-facing views in `sql/views.sql`.
+
+### Summary marts
 
 | Mart | Purpose |
 | --- | --- |
 | `mart_overview_summary` | One-row KPI summary for the overview page |
-| `mart_daily_activity` | Daily launched and destroyed totals with rolling averages |
-| `mart_weapon_model_summary` | Weapon model level totals and reference coverage |
-| `mart_weapon_type_summary` | Broader weapon category and type summaries |
-| `mart_area_macro_summary` | Area macro totals, strike records, and air defense success percentage |
-| `mart_directional_macro_summary` | Coarse north/south/east/west style map summaries |
-| `mart_region_activity` | Oblast-level region activity for the specific region map |
+| `mart_daily_activity` | Daily launched and destroyed totals with rolling averages for overview trends |
+| `mart_weapon_model_summary` | Weapon model totals, reference coverage, and first/last seen dates |
+| `mart_weapon_type_summary` | Aggregated weapon category and weapon type totals |
+| `mart_area_macro_summary` | Area macro and target scope totals |
+| `mart_directional_macro_summary` | Coarse directional macro map summary |
+| `mart_region_activity` | Reporting-region summary for the specific region map |
 
-Dashboard views are created in `sql/views.sql`. The Streamlit app reads the `vw_dashboard_*` views instead of querying raw mart names directly.
+### Daily marts
+
+Daily marts live in the `daily` schema inside `gold.duckdb`.
+
+| Mart | Grain | Purpose |
+| --- | --- | --- |
+| `daily.mart_weapon_model_daily` | `event_date + weapon_model` | Date-range rollups for weapon model charts and analysis |
+| `daily.mart_weapon_type_daily` | `event_date + weapon_category + weapon_type` | Date-range rollups for weapon type summaries |
+| `daily.mart_area_macro_daily` | `event_date + area_macro + target_scope` | Date-range rollups for area summaries |
+| `daily.mart_directional_macro_daily` | `event_date + area_macro` | Daily directional macro map support |
+| `daily.mart_region_daily` | `event_date + reporting_region` | Daily region map support with allocated and exploded totals |
+
+### Dashboard views
+
+The Streamlit app reads the `vw_dashboard_*` views instead of querying raw mart names directly.
+
+| View | Source |
+| --- | --- |
+| `vw_dashboard_overview` | `mart_overview_summary` |
+| `vw_dashboard_daily_activity` | `mart_daily_activity` |
+| `vw_dashboard_weapon_models` | `mart_weapon_model_summary` |
+| `vw_dashboard_weapon_types` | `mart_weapon_type_summary` |
+| `vw_dashboard_area_macros` | `mart_area_macro_summary` |
+| `vw_dashboard_directional_macros` | `mart_directional_macro_summary` |
+| `vw_dashboard_region_map` | `mart_region_activity` |
+| `vw_dashboard_weapon_models_daily` | `daily.mart_weapon_model_daily` |
+| `vw_dashboard_weapon_types_daily` | `daily.mart_weapon_type_daily` |
+| `vw_dashboard_area_macros_daily` | `daily.mart_area_macro_daily` |
+| `vw_dashboard_directional_macros_daily` | `daily.mart_directional_macro_daily` |
+| `vw_dashboard_region_map_daily` | `daily.mart_region_daily` |
 
 ## How The Code Works
 
 ```text
-src/ingest.py       Reads raw bronze CSV files.
-src/download_data.py Downloads the source dataset from Kaggle into the bronze layer.
-src/transform.py    Cleans columns, parses dates, normalizes weapon models, and maps targets to regions.
-src/load.py         Writes silver CSV/DuckDB outputs and builds the gold DuckDB database.
-src/pipeline.py     Runs the full bronze -> silver -> gold pipeline.
-sql/marts.sql       Builds analytics-ready gold mart tables.
-sql/views.sql       Creates stable dashboard-facing views.
-dashboard/data.py   Opens read-only DuckDB connections for Streamlit queries.
-app.py              Main Streamlit overview page.
-pages/              Additional Streamlit pages for weapons and areas.
-notebooks/          Local exploration notebooks.
+src/ingest.py         Reads raw bronze CSV files.
+src/download_data.py  Downloads the source dataset from Kaggle into the bronze layer.
+src/transform.py      Cleans columns, parses dates, normalizes weapon models, and maps targets to regions.
+src/load.py           Writes silver CSV/DuckDB outputs and builds the gold DuckDB database.
+src/pipeline.py       Runs the full bronze -> silver -> gold pipeline.
+sql/marts.sql         Builds summary gold mart tables.
+sql/daily_marts.sql   Builds date-grained marts in the `daily` schema.
+sql/views.sql         Creates stable dashboard-facing views.
+dashboard/data.py     Opens read-only DuckDB connections for Streamlit queries.
+dashboard/date_queries.py Aggregates filtered dashboard queries from daily views.
+app.py                Streamlit navigation entrypoint.
+pages/                Streamlit pages for overview, weapons, areas, and analysis.
+notebooks/            Local exploration notebooks.
 ```
 
 Do not run the pipeline with `python src/pipeline.py`. The project uses package imports, so run it with Poetry or as a module.
@@ -207,10 +241,13 @@ ukrane-war-drone-analytics/
 |   `-- gold/
 |-- notebooks/
 |-- pages/
+|   |-- overview.py
 |   |-- 1_Weapons.py
-|   `-- 2_Areas.py
+|   |-- 2_Areas.py
+|   `-- 3_Analysis.py
 |-- sql/
 |   |-- marts.sql
+|   |-- daily_marts.sql
 |   `-- views.sql
 |-- src/
 |   |-- download_data.py
