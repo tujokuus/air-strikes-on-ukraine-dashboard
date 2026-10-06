@@ -289,7 +289,11 @@ def transform_attacks(
     attacks["weapon_model_key"] = attacks["weapon_model"].map(_normalize_model_key)
     attacks["event_date"] = _derive_event_date(attacks["time_start"])
 
+    # Kaggle occasionally removes optional metrics from the source CSV. Keep the
+    # silver schema stable so a fresh Streamlit Cloud bootstrap still succeeds.
     for column in ATTACK_NUMERIC_COLUMNS:
+        if column not in attacks.columns:
+            attacks[column] = pd.Series(pd.NA, index=attacks.index, dtype="object")
         attacks[column] = _to_nullable_numeric(attacks[column])
 
     attacks["area_regions_list"] = attacks["target"].map(split_area_targets)
