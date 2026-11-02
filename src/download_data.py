@@ -14,10 +14,20 @@ def main() -> None:
     """Download and unzip the configured Kaggle dataset."""
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
+    except ModuleNotFoundError as exc:
+        if exc.name != "kaggle":
+            raise SystemExit(
+                f"The Kaggle package could not import a required module: {exc.name}. "
+                "Check the installed dependencies in the application's environment."
+            ) from exc
+        raise SystemExit(
+            "The 'kaggle' package is not installed. Install the project dependencies "
+            "in the application's Python environment."
+        ) from exc
     except ImportError as exc:
         raise SystemExit(
-            "The 'kaggle' package is not installed. Run 'poetry install' after "
-            "updating dependencies, or install it with 'poetry add kaggle'."
+            f"The Kaggle package could not be imported: {exc}. "
+            "Check the installed dependency versions."
         ) from exc
     except Exception as exc:
         raise SystemExit(
