@@ -235,8 +235,11 @@ retrieves the failed steps' logs for that specific run and attempt and asks one
 OpenAI Agents SDK agent to write a short Finnish diagnosis. The report is in the
 analysis run's GitHub Actions summary and the `monitor-failure-analysis` artifact
 for seven days. The monitor's own GitHub failure notifications remain independent;
-the agent report is not sent by email. This first version does not inspect
-screenshots, access private Streamlit Cloud logs, or modify the repository.
+the agent report is not sent by email. The analysis uses at most one screenshot
+from the matching run attempt, preferring `failure-2.png` over `failure-1.png`.
+If the screenshot is missing, expired, too large, or cannot be matched to the
+attempt unambiguously, the analysis continues with logs only. It does not access
+private Streamlit Cloud logs or modify the repository.
 
 To enable analysis, configure a billable OpenAI API project and a model available
 to it, then add `OPENAI_API_KEY` under the repository's **Settings → Secrets and
@@ -254,6 +257,8 @@ failed scheduled or manually triggered monitor runs from this repository. A
 successful monitor run is not analyzed. Only the last 40,000 bytes of failed-step
 logs are sent for analysis, after basic token redaction; review logs for sensitive
 information because automated redaction cannot guarantee removal of every secret.
+If a screenshot is available it is sent to the model too; screenshots are not
+redacted and may contain sensitive information. Image input adds to API usage.
 The report is an AI-generated assessment, not a verified root cause.
 
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.

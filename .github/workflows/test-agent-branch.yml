@@ -4,7 +4,9 @@ name: Test monitor failure agent on branch
 on:
   push:
     branches: [monitoring-failure-agent]
-    paths: ['.github/workflows/test-agent-branch.yml']
+    paths:
+      - '.github/workflows/test-agent-branch.yml'
+      - 'monitoring/agent/**'
 
 permissions:
   actions: read

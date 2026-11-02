@@ -2,6 +2,8 @@
 
 import io
 import json
+import base64
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -65,3 +67,46 @@ def test_missing_api_key_creates_failure_report(tmp_path, monkeypatch, capsys):
     assert analyze_failure.main() == 1
     assert "OPENAI_API_KEY is missing" in capsys.readouterr().err
     assert "Analyysi ei valmistunut" in (tmp_path / "analysis-output" / "report.md").read_text(encoding="utf-8")
+
+
+def test_screenshot_from_selected_attempt_prefers_second(monkeypatch):
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nmV8AAAAASUVORK5CYII=")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("failure-1.png", png)
+        z.writestr("failure-2.png", png + b"second")
+    artifacts = {"total_count": 2, "artifacts": [
+        {"id": 1, "name": "dashboard-monitor-failure", "expired": False, "size_in_bytes": 1000, "created_at": "2026-01-01T10:00:00Z"},
+        {"id": 2, "name": "dashboard-monitor-failure", "expired": False, "size_in_bytes": 1000, "created_at": "2026-01-02T10:00:00Z"},
+    ]}
+    attempt = {"run_started_at": "2026-01-02T09:59:00Z", "updated_at": "2026-01-02T10:01:00Z"}
+    monkeypatch.setattr(collect_evidence, "gh", lambda *args: SimpleNamespace(stdout=json.dumps(artifacts)))
+    monkeypatch.setattr(collect_evidence.tempfile, "TemporaryFile", io.BytesIO)
+
+    def download(args, *, stdout, **kwargs):
+        assert "/artifacts/2/zip" in args[-1]
+        stdout.write(archive.getvalue())
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(collect_evidence.subprocess, "run", download)
+    image, note = collect_evidence.fetch_screenshot("123", attempt, "example/project")
+    assert image == png + b"second"
+    assert "failure-2.png" in note
+
+
+def test_missing_screenshot_falls_back_to_log_only(monkeypatch):
+    attempt = {"run_started_at": "2026-01-02T09:59:00Z", "updated_at": "2026-01-02T10:01:00Z"}
+    monkeypatch.setattr(collect_evidence, "gh", lambda *args: SimpleNamespace(stdout=json.dumps({"total_count": 0, "artifacts": []})))
+    image, note = collect_evidence.fetch_screenshot("123", attempt, "example/project")
+    assert image is None
+    assert "ei löytynyt" in note
+
+
+def test_model_input_contains_at_most_one_image():
+    input_items = analyze_failure.build_input({"failed_step_log": "example", "screenshot_base64": "aW1hZ2U="})
+    content = input_items[0]["content"]
+    assert [item["type"] for item in content] == ["input_text", "input_image"]
+    assert content[1]["image_url"] == "data:image/png;base64,aW1hZ2U="
+    assert "aW1hZ2U=" not in content[0]["text"]
+    no_image = analyze_failure.build_input({"screenshot_base64": None})[0]["content"]
+    assert len(no_image) == 1

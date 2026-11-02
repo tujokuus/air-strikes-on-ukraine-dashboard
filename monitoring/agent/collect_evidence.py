@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+from datetime import datetime
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 
 MAX_LOG_BYTES = 40_000
+MAX_ARTIFACT_BYTES = 5_000_000
+MAX_IMAGE_BYTES = 5_000_000
+MAX_IMAGE_PIXELS = 20_000_000
 WORKFLOW_PATH = ".github/workflows/monitor.yml"
 OUTPUT_PATH = Path("analysis-output/evidence.json")
 
@@ -34,6 +40,58 @@ def redact(text: str) -> str:
     return text
 
 
+def fetch_screenshot(run_id: str, attempt_info: dict, repository: str) -> tuple[bytes | None, str]:
+    """Fetch one screenshot only when its run attempt can be identified safely."""
+    try:
+        start = datetime.fromisoformat(attempt_info["run_started_at"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(attempt_info["updated_at"].replace("Z", "+00:00"))
+        if start.tzinfo is None or end.tzinfo is None or end < start:
+            raise ValueError("Invalid attempt timestamps")
+        result = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100").stdout)
+        if result["total_count"] > 100:
+            return None, "Kuvakaappausta ei käytetty: artefakteja on liian monta yksiselitteiseen valintaan."
+        candidates = []
+        for artifact in result["artifacts"]:
+            if artifact.get("name") != "dashboard-monitor-failure" or artifact.get("expired"):
+                continue
+            created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
+            if start <= created <= end:
+                candidates.append(artifact)
+        if len(candidates) != 1:
+            return None, "Tälle yritykselle ei löytynyt yhtä yksiselitteistä kuvakaappausartefaktia."
+        artifact = candidates[0]
+        artifact_id = str(artifact["id"])
+        if not re.fullmatch(r"[1-9][0-9]*", artifact_id) or not 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT_BYTES:
+            return None, "Kuvakaappausartefakti on virheellinen tai liian suuri."
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run(
+                ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"],
+                stdout=output, stderr=subprocess.DEVNULL, timeout=90, check=False,
+            )
+            if result.returncode or output.tell() > MAX_ARTIFACT_BYTES:
+                return None, "Kuvakaappausartefaktin lataus epäonnistui tai oli liian suuri."
+            output.seek(0)
+            with zipfile.ZipFile(output) as archive:
+                names = archive.namelist()
+                selected = next((name for name in ("failure-2.png", "failure-1.png") if names.count(name) == 1), None)
+                if selected is None:
+                    return None, "Artefaktissa ei ollut sopivaa kuvakaappausta."
+                info = archive.getinfo(selected)
+                if info.file_size > MAX_IMAGE_BYTES:
+                    return None, "Kuvakaappaus oli liian suuri analysoitavaksi."
+                with archive.open(info) as image_file:
+                    image = image_file.read(MAX_IMAGE_BYTES + 1)
+        if len(image) < 24 or len(image) > MAX_IMAGE_BYTES or image[:8] != b"\x89PNG\r\n\x1a\n" or image[12:16] != b"IHDR":
+            return None, "Kuvakaappaus ei ollut kelvollinen PNG-tiedosto."
+        width = int.from_bytes(image[16:20], "big")
+        height = int.from_bytes(image[20:24], "big")
+        if not width or not height or width * height > MAX_IMAGE_PIXELS:
+            return None, "Kuvakaappauksen mitat olivat liian suuret tai virheelliset."
+        return image, f"Käytössä yksi kuvakaappaus: {selected}."
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+        return None, "Kuvakaappausta ei voitu hakea tai varmistaa; analyysi perustuu lokiin."
+
+
 def collect(run_id: str, attempt: str | None, repository: str) -> dict:
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
         raise ValueError("Run ID must be a positive integer.")
@@ -44,8 +102,7 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
 
     run = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}").stdout)
     selected_attempt = attempt or str(run["run_attempt"])
-    if attempt:
-        run = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}").stdout)
+    run = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}/attempts/{selected_attempt}").stdout)
     if (
         run.get("path") != WORKFLOW_PATH
         or run.get("status") != "completed"
@@ -72,6 +129,7 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
         log = output.read().decode("utf-8", errors="replace")
     if not log.strip():
         warning = warning or "No failed-step logs were available."
+    screenshot, screenshot_note = fetch_screenshot(run_id, run, repository)
     return {
         "run_id": run_id,
         "attempt": selected_attempt,
@@ -79,7 +137,9 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
         "head_sha": run.get("head_sha", ""),
         "failed_step_log": redact(log),
         "log_truncated": size > MAX_LOG_BYTES,
-        "limitations": [warning] if warning else [],
+        "limitations": ([warning] if warning else []) + ([screenshot_note] if screenshot is None else []),
+        "screenshot_note": screenshot_note,
+        "screenshot_base64": base64.b64encode(screenshot).decode("ascii") if screenshot else None,
     }
 
 
@@ -89,8 +149,10 @@ def main() -> int:
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Collected evidence for failed monitor run {evidence['run_id']}, attempt {evidence['attempt']}.")
-        if evidence["limitations"]:
-            print(evidence["limitations"][0])
+        print(evidence["screenshot_note"])
+        for warning in evidence["limitations"]:
+            if warning != evidence["screenshot_note"]:
+                print(warning)
         return 0
     except ValueError as exc:
         print(f"Unable to collect or validate monitor run: {exc}", file=sys.stderr)
