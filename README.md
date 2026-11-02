@@ -2,7 +2,7 @@
 
 Analytics project for exploring reported missile and UAV strike activity in the war in Ukraine. The project builds a lightweight local data pipeline with Python, DuckDB, SQL, and Streamlit, then serves dashboard-ready marts through an interactive web app.
 
-- Live dashboard: [https://strikes-on-ukraine-analysis.streamlit.app/](https://strikes-on-ukraine-analysis.streamlit.app/)
+- Live dashboard: [https://air-strikes-on-ukraine-dashboard.streamlit.app/](https://air-strikes-on-ukraine-dashboard.streamlit.app/)
 - Product Backlog: [Google Sheets backlog](https://docs.google.com/spreadsheets/d/1dJnwIyfNNKBvxQJa0GBG62zLGKrf48YhoRG3_N_p24s/edit?usp=sharing)
 
 The dashboard focuses on:
@@ -203,6 +203,35 @@ version currently configured in Streamlit Cloud. The Cloud dependency job also
 checks that the Kaggle API can be imported without real credentials. These checks
 do not test Kaggle authentication, download live data, or verify the deployed app.
 If the Cloud Python version changes, update the workflow to match it.
+
+### Deployed dashboard monitoring
+
+The **Monitor deployed dashboard** GitHub Actions workflow checks the deployed
+overview every other UTC day, around 08:23 UTC, and can also be started with
+**Actions → Monitor deployed dashboard → Run workflow**. Scheduled runs use
+the default branch and can be delayed or skipped by GitHub. The workflow is
+scheduled daily but skips alternate UTC days so the interval stays two days
+across month boundaries; manual runs are never skipped.
+
+The monitor opens the app in Chromium, requests wake-up when Streamlit shows
+its sleeping page, and waits for the overview heading and `Launched total`
+metric. It retries once on failure. Logs are available on the Actions run; on
+failure it uploads screenshots as the `dashboard-monitor-failure` artifact for
+seven days. It does not read private Streamlit Cloud logs or test every page,
+and a successful check does not guarantee the data is current. Configure GitHub
+Actions failure notifications in your GitHub notification settings.
+
+To run the monitor locally, install its separate browser dependency and Chromium:
+
+```bash
+python -m pip install -r monitoring/requirements.txt
+python -m playwright install chromium
+python monitoring/check_dashboard.py
+```
+
+The default monitored URL is specified in `monitoring/check_dashboard.py`.
+Set the `DASHBOARD_URL` environment variable to check a different deployment.
+The monitor may take several minutes when the app has to wake up.
 
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.
 
