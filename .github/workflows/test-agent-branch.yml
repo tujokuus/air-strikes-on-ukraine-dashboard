@@ -31,6 +31,7 @@ jobs:
           MONITOR_RUN_ID: '41462313348'
         run: python monitoring/agent/collect_evidence.py
       - name: Analyze failure
+        id: analyze_agent
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python monitoring/agent/analyze_failure.py
@@ -60,4 +61,6 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ANALYSIS_OUTCOME: ${{ steps.analyze_agent.outcome }}
+          MONITOR_RUN_ID: '41462313348'
         run: python monitoring/agent/send_email.py

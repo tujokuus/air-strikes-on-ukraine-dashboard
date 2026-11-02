@@ -23,7 +23,7 @@ def address(value: str) -> str:
     return parsed.addr_spec
 
 
-def send_notification(environ: dict, report: str) -> bool:
+def send_notification(environ: dict, report: str, *, analysis_unavailable: bool = False) -> bool:
     """Send one message, or skip when SMTP has not been configured at all."""
     values = {name: environ.get(name, "") for name in REQUIRED}
     for name in ("SMTP_HOST", "SMTP_USERNAME", "ALERT_EMAIL_TO"):
@@ -42,7 +42,10 @@ def send_notification(environ: dict, report: str) -> bool:
     recipient = address(values["ALERT_EMAIL_TO"])
 
     message = EmailMessage()
-    message["Subject"] = "Dashboard monitoring failure analysis"
+    message["Subject"] = (
+        "Dashboard monitor failed - agent analysis unavailable"
+        if analysis_unavailable else "Dashboard monitoring failure analysis"
+    )
     message["From"] = sender
     message["To"] = recipient
     message.set_content(report)
@@ -60,15 +63,25 @@ def send_notification(environ: dict, report: str) -> bool:
 def main() -> int:
     try:
         path = Path("analysis-output/report.md")
+        analysis_unavailable = not path.is_file() or os.environ.get("ANALYSIS_OUTCOME") in {"failure", "skipped", "cancelled"}
         report = path.read_text(encoding="utf-8") if path.is_file() else (
             "Monitor failure analysis could not be completed. "
             "Please check the analysis workflow in GitHub Actions.\n"
         )
         repo = os.environ.get("GITHUB_REPOSITORY", "")
         run_id = os.environ.get("GITHUB_RUN_ID", "")
-        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) and re.fullmatch(r"[1-9][0-9]*", run_id):
-            report += f"\nAnalysis workflow: https://github.com/{repo}/actions/runs/{run_id}\n"
-        send_notification(os.environ, report)
+        monitor_run_id = os.environ.get("MONITOR_RUN_ID", "")
+        attempt = os.environ.get("MONITOR_RUN_ATTEMPT", "")
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+            if re.fullmatch(r"[1-9][0-9]*", monitor_run_id):
+                monitor_url = f"https://github.com/{repo}/actions/runs/{monitor_run_id}"
+                if re.fullmatch(r"[1-9][0-9]*", attempt):
+                    monitor_url += f"/attempts/{attempt}"
+                if monitor_url not in report:
+                    report += f"\nOriginal monitor run: {monitor_url}\n"
+            if re.fullmatch(r"[1-9][0-9]*", run_id):
+                report += f"\nAnalysis workflow: https://github.com/{repo}/actions/runs/{run_id}\n"
+        send_notification(os.environ, report, analysis_unavailable=analysis_unavailable)
         return 0
     except ValueError as exc:
         # Only disclose known configuration names, never secrets or addresses.

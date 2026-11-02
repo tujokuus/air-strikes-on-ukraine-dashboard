@@ -48,13 +48,32 @@ async def analyze(evidence: dict) -> str:
     return str(result.final_output).strip()
 
 
+def failure_reason(exc: Exception) -> str:
+    """Describe common API failures without exposing provider error details."""
+    return {
+        "MissingAPIKey": "The OpenAI API key is not configured in GitHub Actions secrets.",
+        "AuthenticationError": "OpenAI authentication failed. Check the API key and its status.",
+        "PermissionDeniedError": "OpenAI denied access. Check the API project and model permissions.",
+        "NotFoundError": "The configured OpenAI model or resource was not found. Check model access and configuration.",
+        "RateLimitError": "OpenAI rate or usage limits were reached. Check API limits and billing.",
+        "APITimeoutError": "The OpenAI request timed out. Check the API service and try again.",
+        "TimeoutError": "The analysis timed out. Check the API service and try again.",
+        "APIConnectionError": "The analysis could not connect to OpenAI. Check network and API service status.",
+        "FileNotFoundError": "The monitor evidence file was unavailable. Check the log collection step.",
+    }.get(type(exc).__name__, "The cause could not be identified safely. Check the analysis run logs.")
+
+
+class MissingAPIKey(Exception):
+    """The analysis was started without a configured API key."""
+
+
 def main() -> int:
     output = Path("analysis-output/report.md")
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         if not os.environ.get("OPENAI_API_KEY"):
             print("OPENAI_API_KEY is missing from GitHub Actions secrets.", file=sys.stderr)
-            raise RuntimeError("OPENAI_API_KEY is not configured.")
+            raise MissingAPIKey()
         evidence = json.loads(Path("analysis-output/evidence.json").read_text(encoding="utf-8"))
         report = asyncio.run(analyze(evidence))
         if not report:
@@ -72,8 +91,9 @@ def main() -> int:
     except Exception as exc:
         output.write_text(
             "# Monitor failure analysis\n\n"
-            "Analysis did not complete. Check the analysis run logs and API settings. "
-            "The original monitor run logs are available in GitHub Actions.\n",
+            "The dashboard monitor failed, but the agent analysis did not complete.\n\n"
+            f"Reason: {failure_reason(exc)}\n\n"
+            "Check the analysis and original monitor run logs in GitHub Actions.\n",
             encoding="utf-8",
         )
         print(f"Analysis failed: {type(exc).__name__}.", file=sys.stderr)

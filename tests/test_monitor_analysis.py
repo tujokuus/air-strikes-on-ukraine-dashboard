@@ -66,7 +66,29 @@ def test_missing_api_key_creates_failure_report(tmp_path, monkeypatch, capsys):
 
     assert analyze_failure.main() == 1
     assert "OPENAI_API_KEY is missing" in capsys.readouterr().err
-    assert "Analysis did not complete" in (tmp_path / "analysis-output" / "report.md").read_text(encoding="utf-8")
+    report = (tmp_path / "analysis-output" / "report.md").read_text(encoding="utf-8")
+    assert "agent analysis did not complete" in report
+    assert "API key is not configured" in report
+
+
+def test_authentication_failure_produces_safe_explanation(tmp_path, monkeypatch):
+    class AuthenticationError(Exception):
+        pass
+
+    async def failed_analysis(evidence):
+        raise AuthenticationError("sensitive provider details")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(analyze_failure, "analyze", failed_analysis)
+    output = tmp_path / "analysis-output"
+    output.mkdir()
+    (output / "evidence.json").write_text('{}', encoding="utf-8")
+
+    assert analyze_failure.main() == 1
+    report = (output / "report.md").read_text(encoding="utf-8")
+    assert "OpenAI authentication failed" in report
+    assert "sensitive provider details" not in report
 
 
 def test_screenshot_from_selected_attempt_prefers_second(monkeypatch):

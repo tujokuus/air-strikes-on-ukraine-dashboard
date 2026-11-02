@@ -286,6 +286,14 @@ integration test also sends an email once configured. No credentials or addresse
 need to be committed or shared in chat. A provider can impose its own delivery
 limits or charges. GitHub's original failure email remains independent.
 
+If log collection or agent startup fails, the workflow still attempts to send a
+fallback email with links to the monitor and analysis runs. When possible it
+identifies the failure category, such as an API authentication error or timeout,
+without including provider error details or secrets. The email cannot be guaranteed
+if the workflow never starts, is terminated before the notification step, or the
+SMTP connection fails; keep GitHub Actions failure notifications enabled as a
+separate alert.
+
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.
 
 Download the source CSV files:
