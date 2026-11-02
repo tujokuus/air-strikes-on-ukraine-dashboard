@@ -1,0 +1,47 @@
+name: Monitor deployed dashboard
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check two-day schedule
+        id: schedule
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "schedule" ]] || (( ($(date -u +%s) / 86400) % 2 == 0 )); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: the dashboard is checked every other UTC day."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.schedule.outputs.run == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.schedule.outputs.run == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install Playwright
+        if: steps.schedule.outputs.run == 'true'
+        run: |
+          python -m pip install -r monitoring/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Check deployed dashboard
+        if: steps.schedule.outputs.run == 'true'
+        run: python monitoring/check_dashboard.py
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-monitor-failure
+          path: monitor-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
