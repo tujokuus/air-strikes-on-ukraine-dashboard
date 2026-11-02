@@ -228,6 +228,34 @@ The default monitored URL is specified in `monitoring/check_dashboard.py`.
 Set the `DASHBOARD_URL` environment variable to check a different deployment.
 The monitor may take several minutes when the app has to wake up.
 
+### Monitor failure analysis
+
+When **Monitor deployed dashboard** fails, **Analyze dashboard monitor failure**
+retrieves the failed steps' logs for that specific run and attempt and asks one
+OpenAI Agents SDK agent to write a short Finnish diagnosis. The report is in the
+analysis run's GitHub Actions summary and the `monitor-failure-analysis` artifact
+for seven days. The monitor's own GitHub failure notifications remain independent;
+the agent report is not sent by email. This first version does not inspect
+screenshots, access private Streamlit Cloud logs, or modify the repository.
+
+To enable analysis, configure a billable OpenAI API project and a model available
+to it, then add `OPENAI_API_KEY` under the repository's **Settings → Secrets and
+variables → Actions → New repository secret**. Never commit the key or put it in
+logs. The default model is `gpt-6-luna`; API use is billed separately from Codex
+subscription usage. Limit spending in the OpenAI Platform billing settings.
+Without a valid key or model access the analysis fails with a generic message; the
+original monitor result is unaffected.
+
+Once this workflow is in the default branch, test it from **Actions → Analyze
+dashboard monitor failure → Run workflow** using the numeric ID of a previous
+failed **Monitor deployed dashboard** run. Manual runs analyze its latest attempt;
+automatic runs analyze the triggering attempt. The workflow only accepts completed,
+failed scheduled or manually triggered monitor runs from this repository. A
+successful monitor run is not analyzed. Only the last 40,000 bytes of failed-step
+logs are sent for analysis, after basic token redaction; review logs for sensitive
+information because automated redaction cannot guarantee removal of every secret.
+The report is an AI-generated assessment, not a verified root cause.
+
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.
 
 Download the source CSV files:

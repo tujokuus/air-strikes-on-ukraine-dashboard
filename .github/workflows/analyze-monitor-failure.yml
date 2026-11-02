@@ -1,0 +1,63 @@
+name: Analyze dashboard monitor failure
+
+on:
+  workflow_run:
+    workflows: ['Monitor deployed dashboard']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Failed monitor run ID (latest attempt is analyzed)'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Only trusted default-branch code executes with access to the API key.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis dependencies
+        run: python -m pip install -r monitoring/agent/requirements.txt
+      - name: Collect failed monitor logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MONITOR_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          MONITOR_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: python monitoring/agent/collect_evidence.py
+      - name: Analyze failure
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python monitoring/agent/analyze_failure.py
+      - name: Publish analysis summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f analysis-output/report.md ]]; then
+            cat analysis-output/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' '# Monitoroinnin virheanalyysi' '' 'Analyysi ei valmistunut. Tarkista tämän ajon loki ja alkuperäinen monitorointiajo.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-failure-analysis
+          path: analysis-output/report.md
+          if-no-files-found: ignore
+          retention-days: 7
