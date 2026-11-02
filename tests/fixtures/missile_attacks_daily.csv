@@ -1,0 +1,3 @@
+time_start,time_end,model,launch_place,target,target_main,launched,destroyed,not_reach_goal,still_attacking,border_crossing,is_shahed,num_hit_location,num_fall_fragment_location,carrier,turbojet,turbojet_destroyed,affected region,destroyed_details,launched_details,launch_place_details,source
+2025-01-01 00:00,2025-01-01 01:00,Example UAV,Test location,Kyiv oblast,Kyiv oblast,10,8,0,0,0,1,0,0,,0,0,Kyiv oblast,,,,Synthetic test data
+2025-01-02 00:00,2025-01-02 01:00,Example missile,Test location,Odesa oblast,Odesa oblast,4,3,0,0,0,0,0,0,,0,0,Odesa oblast,,,,Synthetic test data
