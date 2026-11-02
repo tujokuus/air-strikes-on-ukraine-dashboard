@@ -1,0 +1,2 @@
+# Used only by the separate failure-analysis workflow.
+openai-agents==0.24.0

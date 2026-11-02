@@ -228,6 +228,72 @@ The default monitored URL is specified in `monitoring/check_dashboard.py`.
 Set the `DASHBOARD_URL` environment variable to check a different deployment.
 The monitor may take several minutes when the app has to wake up.
 
+### Monitor failure analysis
+
+When **Monitor deployed dashboard** fails, **Analyze dashboard monitor failure**
+retrieves the failed steps' logs for that specific run and attempt and asks one
+OpenAI Agents SDK agent to write a short English diagnosis. The report is in the
+analysis run's GitHub Actions summary and the `monitor-failure-analysis` artifact
+for seven days. The monitor's own GitHub failure notifications remain independent;
+an optional SMTP notification can send the report to a separate address. The analysis uses at most one screenshot
+from the matching run attempt, preferring `failure-2.png` over `failure-1.png`.
+If the screenshot is missing, expired, too large, or cannot be matched to the
+attempt unambiguously, the analysis continues with logs only. It does not access
+private Streamlit Cloud logs or modify the repository.
+
+To enable analysis, configure a billable OpenAI API project and a model available
+to it, then add `OPENAI_API_KEY` under the repository's **Settings → Secrets and
+variables → Actions → New repository secret**. Never commit the key or put it in
+logs. The default model is `gpt-6-luna`; API use is billed separately from Codex
+subscription usage. Limit spending in the OpenAI Platform billing settings.
+Without a valid key or model access the analysis fails with a generic message; the
+original monitor result is unaffected.
+
+Once this workflow is in the default branch, test it from **Actions → Analyze
+dashboard monitor failure → Run workflow** using the numeric ID of a previous
+failed **Monitor deployed dashboard** run. Manual runs analyze its latest attempt;
+automatic runs analyze the triggering attempt. The workflow only accepts completed,
+failed scheduled or manually triggered monitor runs from this repository. A
+successful monitor run is not analyzed. Only the last 40,000 bytes of failed-step
+logs are sent for analysis, after basic token redaction; review logs for sensitive
+information because automated redaction cannot guarantee removal of every secret.
+If a screenshot is available it is sent to the model too; screenshots are not
+redacted and may contain sensitive information. Image input adds to API usage.
+The report is an AI-generated assessment, not a verified root cause.
+
+#### Optional email notification
+
+Configure an authenticated SMTP provider that supports STARTTLS (normally port
+587). Add these repository secrets under **Settings → Secrets and variables →
+Actions**:
+
+| Secret | Purpose |
+| --- | --- |
+| `SMTP_HOST` | SMTP server host name |
+| `SMTP_USERNAME` | SMTP login name |
+| `SMTP_PASSWORD` | Provider-issued SMTP password or app password |
+| `ALERT_EMAIL_TO` | One recipient address; it can differ from your GitHub address |
+| `SMTP_PORT` | Optional STARTTLS port; defaults to `587` |
+| `SMTP_FROM` | Optional sender address; defaults to `SMTP_USERNAME` |
+
+The sender address must be accepted by the chosen SMTP provider. Do not use a
+regular account password if the provider requires an app-specific password or
+API credential. If none of the required settings is present, email is skipped;
+partially configured settings or a delivery error make the email step fail. The
+email contains the text report and analysis-run link, not the screenshot. If the
+analysis fails, a brief fallback notification is sent when possible. The branch
+integration test also sends an email once configured. No credentials or addresses
+need to be committed or shared in chat. A provider can impose its own delivery
+limits or charges. GitHub's original failure email remains independent.
+
+If log collection or agent startup fails, the workflow still attempts to send a
+fallback email with links to the monitor and analysis runs. When possible it
+identifies the failure category, such as an API authentication error or timeout,
+without including provider error details or secrets. The email cannot be guaranteed
+if the workflow never starts, is terminated before the notification step, or the
+SMTP connection fails; keep GitHub Actions failure notifications enabled as a
+separate alert.
+
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.
 
 Download the source CSV files:

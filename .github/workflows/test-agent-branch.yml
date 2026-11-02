@@ -1,0 +1,66 @@
+# Temporary branch-only integration test. Remove this file before merging.
+name: Test monitor failure agent on branch
+
+on:
+  push:
+    branches: [monitoring-failure-agent]
+    paths:
+      - '.github/workflows/test-agent-branch.yml'
+      - 'monitoring/agent/**'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  test-agent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis dependencies
+        run: python -m pip install -r monitoring/agent/requirements.txt
+      - name: Collect an earlier failed monitoring run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MONITOR_RUN_ID: '41462313348'
+        run: python monitoring/agent/collect_evidence.py
+      - name: Analyze failure
+        id: analyze_agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python monitoring/agent/analyze_failure.py
+      - name: Publish analysis summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f analysis-output/report.md ]]; then
+            cat analysis-output/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' '# Monitor failure analysis' '' 'Analysis did not complete. Check this test run.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: branch-monitor-failure-analysis
+          path: analysis-output/report.md
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Email analysis notification
+        if: always()
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ANALYSIS_OUTCOME: ${{ steps.analyze_agent.outcome }}
+          MONITOR_RUN_ID: '41462313348'
+        run: python monitoring/agent/send_email.py

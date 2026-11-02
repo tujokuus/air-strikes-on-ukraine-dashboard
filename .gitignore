@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 monitor-artifacts/
+analysis-output/
 .ipynb_checkpoints/
 .venv/
 venv/
