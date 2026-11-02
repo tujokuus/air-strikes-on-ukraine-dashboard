@@ -41,7 +41,7 @@ jobs:
           if [[ -f analysis-output/report.md ]]; then
             cat analysis-output/report.md >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '%s\n' '# Monitoroinnin virheanalyysi' '' 'Analyysi ei valmistunut. Tarkista tämän testiajon loki.' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' '# Monitor failure analysis' '' 'Analysis did not complete. Check this test run.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload analysis report
         if: always()
@@ -51,3 +51,13 @@ jobs:
           path: analysis-output/report.md
           if-no-files-found: ignore
           retention-days: 7
+      - name: Email analysis notification
+        if: always()
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python monitoring/agent/send_email.py

@@ -49,7 +49,7 @@ def fetch_screenshot(run_id: str, attempt_info: dict, repository: str) -> tuple[
             raise ValueError("Invalid attempt timestamps")
         result = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100").stdout)
         if result["total_count"] > 100:
-            return None, "Kuvakaappausta ei käytetty: artefakteja on liian monta yksiselitteiseen valintaan."
+            return None, "Screenshot unavailable: too many artifacts to select one reliably."
         candidates = []
         for artifact in result["artifacts"]:
             if artifact.get("name") != "dashboard-monitor-failure" or artifact.get("expired"):
@@ -58,38 +58,38 @@ def fetch_screenshot(run_id: str, attempt_info: dict, repository: str) -> tuple[
             if start <= created <= end:
                 candidates.append(artifact)
         if len(candidates) != 1:
-            return None, "Tälle yritykselle ei löytynyt yhtä yksiselitteistä kuvakaappausartefaktia."
+            return None, "No unique screenshot artifact was found for this attempt."
         artifact = candidates[0]
         artifact_id = str(artifact["id"])
         if not re.fullmatch(r"[1-9][0-9]*", artifact_id) or not 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT_BYTES:
-            return None, "Kuvakaappausartefakti on virheellinen tai liian suuri."
+            return None, "The screenshot artifact is invalid or too large."
         with tempfile.TemporaryFile() as output:
             result = subprocess.run(
                 ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"],
                 stdout=output, stderr=subprocess.DEVNULL, timeout=90, check=False,
             )
             if result.returncode or output.tell() > MAX_ARTIFACT_BYTES:
-                return None, "Kuvakaappausartefaktin lataus epäonnistui tai oli liian suuri."
+                return None, "The screenshot artifact download failed or was too large."
             output.seek(0)
             with zipfile.ZipFile(output) as archive:
                 names = archive.namelist()
                 selected = next((name for name in ("failure-2.png", "failure-1.png") if names.count(name) == 1), None)
                 if selected is None:
-                    return None, "Artefaktissa ei ollut sopivaa kuvakaappausta."
+                    return None, "The artifact did not contain a usable screenshot."
                 info = archive.getinfo(selected)
                 if info.file_size > MAX_IMAGE_BYTES:
-                    return None, "Kuvakaappaus oli liian suuri analysoitavaksi."
+                    return None, "The screenshot was too large to analyze."
                 with archive.open(info) as image_file:
                     image = image_file.read(MAX_IMAGE_BYTES + 1)
         if len(image) < 24 or len(image) > MAX_IMAGE_BYTES or image[:8] != b"\x89PNG\r\n\x1a\n" or image[12:16] != b"IHDR":
-            return None, "Kuvakaappaus ei ollut kelvollinen PNG-tiedosto."
+            return None, "The screenshot was not a valid PNG file."
         width = int.from_bytes(image[16:20], "big")
         height = int.from_bytes(image[20:24], "big")
         if not width or not height or width * height > MAX_IMAGE_PIXELS:
-            return None, "Kuvakaappauksen mitat olivat liian suuret tai virheelliset."
-        return image, f"Käytössä yksi kuvakaappaus: {selected}."
+            return None, "The screenshot dimensions were invalid or too large."
+        return image, f"One screenshot selected: {selected}."
     except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
-        return None, "Kuvakaappausta ei voitu hakea tai varmistaa; analyysi perustuu lokiin."
+        return None, "The screenshot could not be retrieved or verified; analysis uses logs only."
 
 
 def collect(run_id: str, attempt: str | None, repository: str) -> dict:

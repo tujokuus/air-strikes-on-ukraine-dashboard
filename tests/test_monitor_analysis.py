@@ -66,7 +66,7 @@ def test_missing_api_key_creates_failure_report(tmp_path, monkeypatch, capsys):
 
     assert analyze_failure.main() == 1
     assert "OPENAI_API_KEY is missing" in capsys.readouterr().err
-    assert "Analyysi ei valmistunut" in (tmp_path / "analysis-output" / "report.md").read_text(encoding="utf-8")
+    assert "Analysis did not complete" in (tmp_path / "analysis-output" / "report.md").read_text(encoding="utf-8")
 
 
 def test_screenshot_from_selected_attempt_prefers_second(monkeypatch):
@@ -99,7 +99,7 @@ def test_missing_screenshot_falls_back_to_log_only(monkeypatch):
     monkeypatch.setattr(collect_evidence, "gh", lambda *args: SimpleNamespace(stdout=json.dumps({"total_count": 0, "artifacts": []})))
     image, note = collect_evidence.fetch_screenshot("123", attempt, "example/project")
     assert image is None
-    assert "ei löytynyt" in note
+    assert "No unique screenshot" in note
 
 
 def test_model_input_contains_at_most_one_image():
