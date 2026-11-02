@@ -147,7 +147,7 @@ def _normalize_string(value: object) -> str:
 
 def _strip_object_columns(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
-    object_columns = result.select_dtypes(include="object").columns
+    object_columns = result.select_dtypes(include=["object", "str"]).columns
     for column in object_columns:
         result[column] = result[column].map(_normalize_string)
     return result
@@ -363,7 +363,7 @@ def transform_attacks(
     attacks_regions = exploded[base_columns + ["area_region", "has_specific_area_region"]].copy()
 
     for frame in (attacks_clean, attacks_regions):
-        object_columns = frame.select_dtypes(include="object").columns
+        object_columns = frame.select_dtypes(include=["object", "str"]).columns
         frame[object_columns] = frame[object_columns].fillna("")
 
     return attacks_clean, attacks_regions

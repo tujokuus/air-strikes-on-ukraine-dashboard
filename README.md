@@ -174,6 +174,36 @@ Install dependencies:
 poetry install
 ```
 
+### Development and tests
+
+Use Python 3.12 or newer and install the development dependencies with:
+
+```bash
+poetry install --with dev
+poetry run pytest
+```
+
+The test data in `tests/fixtures/` is synthetic. The `isolated_data_dir` pytest
+fixture copies it to a temporary directory and redirects pipeline input and output
+there. Tests using this fixture do not need Kaggle credentials or network access
+and do not overwrite the project's `data/` files. Keep future tests that run the
+pipeline on this fixture (or provide equivalent isolation).
+
+For Streamlit Cloud, `requirements.txt` is the dependency file used for installation;
+Poetry uses `pyproject.toml` and `poetry.lock` locally. Keep the main dependency
+version ranges in both files aligned when changing dependencies. The lock file pins
+local Poetry installs, while Cloud can select a different version within the ranges;
+matching ranges alone does not guarantee identical environments. Python versions
+can differ as well. When changing dependencies, run `poetry lock` as needed, commit
+the lock file, and check that the Cloud deployment still installs and starts.
+
+GitHub Actions runs the tests on pushes and pull requests using Poetry on Python
+3.12 and separately using `requirements.txt` on Python 3.14, matching the Python
+version currently configured in Streamlit Cloud. The Cloud dependency job also
+checks that the Kaggle API can be imported without real credentials. These checks
+do not test Kaggle authentication, download live data, or verify the deployed app.
+If the Cloud Python version changes, update the workflow to match it.
+
 Configure Kaggle API credentials before downloading the source data. Create a Kaggle API token in your Kaggle account settings and configure it locally according to the Kaggle CLI instructions. If you keep credentials inside the project, use a `.kaggle/` directory; it is ignored by `.gitignore`.
 
 Download the source CSV files:

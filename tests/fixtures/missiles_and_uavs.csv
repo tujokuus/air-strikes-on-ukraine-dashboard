@@ -1,0 +1,3 @@
+model,category,national_origin,type,launch_platform,name,name_NATO,in_service,designer,manufacturer,guidance_system,unit_cost
+Example UAV,UAV,Example,UAV,Ground,Example UAV,,2020,Example,Example,Example,
+Example missile,Missile,Example,Missile,Ground,Example missile,,2020,Example,Example,Example,
