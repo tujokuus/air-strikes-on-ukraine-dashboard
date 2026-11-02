@@ -221,6 +221,9 @@ seven days. It does not read private Streamlit Cloud logs or test every page,
 and a successful check does not guarantee the data is current. Configure GitHub
 Actions failure notifications in your GitHub notification settings.
 
+The monitoring job uses Ubuntu 24.04 to match the pinned Playwright version.
+When upgrading Playwright or the runner image, check their OS compatibility.
+
 To run the monitor locally, install its separate browser dependency and Chromium:
 
 ```bash

@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   monitor:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 supports Ubuntu 24.04; ubuntu-latest can move to a newer OS.
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - name: Check two-day schedule
