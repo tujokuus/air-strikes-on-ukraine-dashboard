@@ -224,14 +224,6 @@ Actions failure notifications in your GitHub notification settings.
 The monitoring job uses Ubuntu 24.04 to match the pinned Playwright version.
 When upgrading Playwright or the runner image, check their OS compatibility.
 
-To run the monitor locally, install its separate browser dependency and Chromium:
-
-```bash
-python -m pip install -r monitoring/requirements.txt
-python -m playwright install chromium
-python monitoring/check_dashboard.py
-```
-
 The default monitored URL is specified in `monitoring/check_dashboard.py`.
 Set the `DASHBOARD_URL` environment variable to check a different deployment.
 The monitor may take several minutes when the app has to wake up.

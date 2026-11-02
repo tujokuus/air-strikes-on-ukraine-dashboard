@@ -23,6 +23,8 @@ def check_page(page) -> None:
     page.goto(APP_URL, wait_until="domcontentloaded", timeout=60_000)
     deadline = time.monotonic() + TIMEOUT_SECONDS
     wake_clicked = False
+    heading = page.locator("h1").filter(has_text="Air Strikes in Ukraine Analytics")
+    metric = page.get_by_test_id("stMetric").filter(has_text="Launched total")
     while time.monotonic() < deadline:
         wake_button = page.get_by_role("button", name="Yes, get this app back up!")
         if not wake_clicked and wake_button.is_visible():
@@ -39,13 +41,15 @@ def check_page(page) -> None:
         if bootstrap_error.count() and bootstrap_error.first.is_visible():
             raise RuntimeError("The dashboard reported a data bootstrap error.")
 
-        heading = page.get_by_role("heading", name="Air Strikes in Ukraine Analytics", exact=True)
-        metric = page.get_by_test_id("stMetric").filter(has_text="Launched total")
         if heading.count() and heading.first.is_visible() and metric.count() and metric.first.is_visible():
             print("Overview heading and Launched total metric are visible.", flush=True)
             return
         page.wait_for_timeout(2_000)
-    raise TimeoutError(f"Overview did not load within {TIMEOUT_SECONDS} seconds.")
+    raise TimeoutError(
+        f"Overview did not load within {TIMEOUT_SECONDS} seconds. "
+        f"Visible heading: {bool(heading.count() and heading.first.is_visible())}; "
+        f"visible Launched total metric: {bool(metric.count() and metric.first.is_visible())}."
+    )
 
 
 def main() -> int:
