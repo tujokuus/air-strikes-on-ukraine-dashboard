@@ -1,0 +1,83 @@
+name: Build and publish approved data
+
+on:
+  schedule:
+    - cron: '13 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: approved-data-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check two-day schedule
+        id: schedule
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != schedule ]] || (( ($(date -u +%s) / 86400) % 2 == 0 )); then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.schedule.outputs.run == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: steps.schedule.outputs.run == 'true'
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        if: steps.schedule.outputs.run == 'true'
+        run: |
+          python -m pip install -r requirements.txt -r monitoring/requirements.txt 'pytest>=9.2.0,<10.0.0'
+          python -m playwright install --with-deps chromium
+      - name: Run automated tests
+        if: steps.schedule.outputs.run == 'true'
+        run: python -m pytest -q
+      - name: Download, validate and build candidate
+        if: steps.schedule.outputs.run == 'true'
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: python -m src.build_release "$RUNNER_TEMP/data-candidate"
+      - name: Browser test candidate
+        if: steps.schedule.outputs.run == 'true'
+        env:
+          DASHBOARD_GOLD_DB: ${{ runner.temp }}/data-candidate/gold/gold.duckdb
+        run: |
+          python -m streamlit run app.py --server.headless true > "$RUNNER_TEMP/streamlit.log" 2>&1 &
+          for i in {1..60}; do curl -fsS http://127.0.0.1:8501/_stcore/health && break; sleep 2; done
+          python monitoring/check_candidate.py
+      - name: Publish verified release
+        if: steps.schedule.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LICENSE_CONFIRMED: ${{ vars.DATA_LICENSE_CONFIRMED }}
+        shell: bash
+        run: |
+          if [[ "$LICENSE_CONFIRMED" != 'true' ]]; then
+            echo 'Set DATA_LICENSE_CONFIRMED=true after checking the Kaggle dataset license and redistribution terms.' >&2
+            exit 1
+          fi
+          tag="data-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cp "$RUNNER_TEMP/data-candidate/gold/gold.duckdb" "$RUNNER_TEMP/data-candidate/gold.duckdb"
+          (cd "$RUNNER_TEMP/data-candidate" && sha256sum -c gold.duckdb.sha256)
+          gh release create "$tag" --draft --title "Approved data $tag" --notes 'Validated dashboard data. See repository README for data attribution and license.' "$RUNNER_TEMP/data-candidate/gold.duckdb" "$RUNNER_TEMP/data-candidate/gold.duckdb.sha256" "$RUNNER_TEMP/data-candidate/metadata.json"
+          gh release edit "$tag" --draft=false --latest=false
+      - name: Upload candidate diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-diagnostics
+          path: |
+            candidate-artifacts/
+            ${{ runner.temp }}/streamlit.log
+          if-no-files-found: ignore
+          retention-days: 7

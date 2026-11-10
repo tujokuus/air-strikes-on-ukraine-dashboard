@@ -16,7 +16,7 @@ The dashboard focuses on:
 
 This project is under active development and deployed on Streamlit Community Cloud. The current version is a local and deployed MVP with a bronze/silver/gold data structure, DuckDB marts, and a Streamlit dashboard.
 
-Data files and generated databases are intentionally not committed to Git. To run the project locally, add the source CSV files to `data/bronze/` and rebuild the DuckDB files with the pipeline.
+Data files and generated databases are intentionally not committed to Git. The deployed dashboard downloads a verified, approved Gold database from a GitHub Release. The local pipeline can still be run separately for development.
 
 ## Data Source And License
 
@@ -204,6 +204,16 @@ checks that the Kaggle API can be imported without real credentials. These check
 do not test Kaggle authentication, download live data, or verify the deployed app.
 If the Cloud Python version changes, update the workflow to match it.
 
+### Approved data releases
+
+The **Build and publish approved data** workflow runs every other UTC day and supports manual runs. It downloads Kaggle data to the runner's temporary directory, validates the source, builds Gold, runs the dashboard queries and checks all four pages in Chromium. Only after these checks pass does it publish `gold.duckdb`, `gold.duckdb.sha256` and `metadata.json` as a `data-*` GitHub Release. Raw CSVs are not committed or uploaded. The Gold database currently also contains copies of Silver-level tables, so publishing it redistributes those records.
+
+Before the first publication, check the dataset page and any upstream notices for the current license and permission to redistribute these derived and Silver-level records. The README's existing CC BY-NC-SA 4.0 description has not been independently verified from Kaggle's live license display. Once confirmed, add the repository Actions variable `DATA_LICENSE_CONFIRMED` with value `true`; without it publication fails. Keep the attribution, license link and description of changes in this README with every release. Add `KAGGLE_API_TOKEN` as an Actions secret, and ensure Actions has permission to create releases. Scheduled failures use GitHub Actions notifications; configure those in GitHub.
+
+At startup Streamlit downloads the latest published `data-*` release and verifies the checksum. An already downloaded copy is used offline only if its saved checksum matches. A new release is selected on process restart; no Kaggle download or transformation runs in Streamlit. If no verified copy is available, the app shows an error. The first release must exist before deploying this version. The checksum checks integrity, not the trustworthiness of the publisher.
+
+For rollback, download the known-good release assets, verify their checksum, create a **new** `data-*` release with those assets and restart Streamlit; retain the original metadata to make the rollback traceable. The database and checksum assets must be named `gold.duckdb` and `gold.duckdb.sha256`. For local development with a database you built yourself, set `DASHBOARD_GOLD_DB` to its absolute path before starting Streamlit. This explicit override also lets the candidate browser test use exactly the file being tested.
+
 ### Deployed dashboard monitoring
 
 The **Monitor deployed dashboard** GitHub Actions workflow checks the deployed
@@ -308,9 +318,10 @@ Run the full pipeline:
 poetry run pipeline
 ```
 
-Start the dashboard:
+Start the dashboard using your locally built database (PowerShell):
 
-```bash
+```powershell
+$env:DASHBOARD_GOLD_DB = (Resolve-Path 'data/gold/gold.duckdb').Path
 poetry run streamlit run app.py
 ```
 

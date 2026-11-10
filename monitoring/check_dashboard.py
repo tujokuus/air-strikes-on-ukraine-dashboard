@@ -47,7 +47,7 @@ def check_page(page) -> None:
                 if errors.count() and errors.first.is_visible():
                     raise RuntimeError(f"Streamlit exception: {errors.first.inner_text()[:1500]}")
                 bootstrap_error = frame.get_by_text(
-                    "Gold database was not found and automatic data bootstrap failed.", exact=False
+                    "Approved Gold database could not be loaded.", exact=False
                 )
                 if bootstrap_error.count() and bootstrap_error.first.is_visible():
                     raise RuntimeError("The dashboard reported a data bootstrap error.")
