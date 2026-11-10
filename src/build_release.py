@@ -78,21 +78,21 @@ def report_changes(inputs: dict) -> None:
         print(f'Previous release comparison unavailable: {type(exc).__name__}')
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('workdir', type=Path)
-    args = parser.parse_args()
-    root = args.workdir.resolve()
+def build_candidate(root: Path, *, download: bool = True, compare_previous: bool = True) -> Path:
+    """Build under root; local callers may supply existing files in root/bronze."""
+    root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     bronze = root / 'bronze'
-    download_data.BRONZE_DATA_DIR = bronze
-    ingest.BRONZE_DATA_DIR = bronze
-    load.SILVER_DATA_DIR = root / 'silver'
-    load.GOLD_DATA_DIR = root / 'gold'
-    download_data.main()
-    inputs = validate_inputs(bronze)
-    report_changes(inputs)
-    pipeline.main()
+    with patch.object(download_data, 'BRONZE_DATA_DIR', bronze), \
+         patch.object(ingest, 'BRONZE_DATA_DIR', bronze), \
+         patch.object(load, 'SILVER_DATA_DIR', root / 'silver'), \
+         patch.object(load, 'GOLD_DATA_DIR', root / 'gold'):
+        if download:
+            download_data.main()
+        inputs = validate_inputs(bronze)
+        if compare_previous:
+            report_changes(inputs)
+        pipeline.main()
     database = root / 'gold/gold.duckdb'
     validate_gold(database)
     digest = sha256(database)
@@ -104,6 +104,14 @@ def main() -> None:
         'code_revision': os.environ.get('GITHUB_SHA', 'unknown'),
         'gold_sha256': digest,
     }, indent=2) + '\n', encoding='utf-8')
+    return database
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('workdir', type=Path)
+    args = parser.parse_args()
+    build_candidate(args.workdir)
 
 
 if __name__ == '__main__':

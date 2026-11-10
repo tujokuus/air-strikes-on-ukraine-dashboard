@@ -206,6 +206,21 @@ If the Cloud Python version changes, update the workflow to match it.
 
 ### Approved data releases
 
+#### Test latest Kaggle data locally without publishing
+
+Configure Kaggle API credentials locally using the Kaggle CLI instructions, then run the candidate build and dashboard checks:
+
+```powershell
+poetry install --with dev
+poetry run python -m pip install -r monitoring/requirements.txt
+poetry run python -m playwright install chromium
+poetry run python -m scripts.test_release_locally
+```
+
+The command first runs the full pytest suite, downloads the latest Kaggle dataset into a fresh ignored `.local-data-tests/run-*` directory, builds and validates a candidate there, then starts Streamlit on localhost and runs the browser smoke test. Download errors fail the run; it does not fall back to older data. It does not contact GitHub, create releases, or modify your normal Bronze, Silver or Gold files. The downloaded data, candidate, screenshots and Streamlit log remain in the printed output directory for inspection; remove old test directories when no longer needed. To use an existing snapshot without downloading, add `--data-dir C:\path\to\bronze`; use `--skip-browser` only when you deliberately want to skip page checks. If Chromium is already installed elsewhere, set `PLAYWRIGHT_BROWSER_EXECUTABLE` to its executable path instead of installing Playwright's browser.
+
+The browser check currently has a known limitation: it waits for page titles and a fixed delay, which may miss errors occurring later. Independent review also identified unresolved release compatibility and recovery issues; a passing local test does not mean the current workflow is ready to publish or deploy.
+
 The **Build and publish approved data** workflow runs every other UTC day and supports manual runs. It downloads Kaggle data to the runner's temporary directory, validates the source, builds Gold, runs the dashboard queries and checks all four pages in Chromium. Only after these checks pass does it publish `gold.duckdb`, `gold.duckdb.sha256` and `metadata.json` as a `data-*` GitHub Release. Raw CSVs are not committed or uploaded. The Gold database currently also contains copies of Silver-level tables, so publishing it redistributes those records.
 
 Before the first publication, check the dataset page and any upstream notices for the current license and permission to redistribute these derived and Silver-level records. The README's existing CC BY-NC-SA 4.0 description has not been independently verified from Kaggle's live license display. Once confirmed, add the repository Actions variable `DATA_LICENSE_CONFIRMED` with value `true`; without it publication fails. Keep the attribution, license link and description of changes in this README with every release. Add `KAGGLE_API_TOKEN` as an Actions secret, and ensure Actions has permission to create releases. Scheduled failures use GitHub Actions notifications; configure those in GitHub.

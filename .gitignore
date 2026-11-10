@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 monitor-artifacts/
 candidate-artifacts/
+.local-data-tests/
 .test-release-temp/
 analysis-output/
 .ipynb_checkpoints/

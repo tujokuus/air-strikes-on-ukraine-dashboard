@@ -7,7 +7,7 @@ from playwright.sync_api import sync_playwright
 
 def main():
     url = os.environ.get('DASHBOARD_URL', 'http://127.0.0.1:8501')
-    artifacts = Path('candidate-artifacts')
+    artifacts = Path(os.environ.get('CANDIDATE_ARTIFACT_DIR', 'candidate-artifacts'))
     artifacts.mkdir(exist_ok=True)
     with sync_playwright() as playwright:
         executable = os.environ.get('PLAYWRIGHT_BROWSER_EXECUTABLE')
