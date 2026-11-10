@@ -38,7 +38,9 @@ async def analyze(evidence: dict) -> str:
     agent = Agent(
         name="Monitor failure analyst",
         model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
-        instructions=INSTRUCTIONS,
+        instructions=INSTRUCTIONS + (" The failure is from the Kaggle data-release pipeline; "
+            "diagnose the failed validation or build step and do not claim the dashboard itself failed."
+            if os.environ.get('EVIDENCE_KIND') == 'data_release' else ''),
         model_settings=ModelSettings(max_tokens=1200),
     )
     result = await asyncio.wait_for(
@@ -79,8 +81,9 @@ def main() -> int:
         if not report:
             raise RuntimeError("The agent returned an empty report.")
         screenshot_status = "included (1 image)" if evidence.get("screenshot_base64") else "not included"
+        title = 'Data-release failure analysis' if os.environ.get('EVIDENCE_KIND') == 'data_release' else 'Monitor failure analysis'
         output.write_text(
-            "# Monitor failure analysis\n\n"
+            f"# {title}\n\n"
             f"Failed run: {evidence['run_url']}\n\n"
             f"Screenshot: {screenshot_status}.\n\n"
             "This is an AI-generated assessment; verify its conclusions against the logs.\n\n"
@@ -89,9 +92,10 @@ def main() -> int:
         print("Analysis report created.")
         return 0
     except Exception as exc:
+        title = 'Data-release failure analysis' if os.environ.get('EVIDENCE_KIND') == 'data_release' else 'Monitor failure analysis'
         output.write_text(
-            "# Monitor failure analysis\n\n"
-            "The dashboard monitor failed, but the agent analysis did not complete.\n\n"
+            f"# {title}\n\n"
+            "The workflow failed, but the agent analysis did not complete.\n\n"
             f"Reason: {failure_reason(exc)}\n\n"
             "Check the analysis and original monitor run logs in GitHub Actions.\n",
             encoding="utf-8",

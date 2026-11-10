@@ -27,6 +27,23 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def latest_data_release() -> dict | None:
+    """Find the latest published data release across all release pages."""
+    releases = []
+    page = 1
+    while True:
+        url = API_URL if page == 1 else f'{API_URL}&page={page}'
+        data = json.loads(_read_url(url))
+        if not isinstance(data, list):
+            raise ValueError('Invalid releases response')
+        releases.extend(r for r in data if r.get('tag_name', '').startswith('data-')
+                        and not r.get('draft') and not r.get('prerelease'))
+        if len(data) < 100:
+            break
+        page += 1
+    return max(releases, key=lambda r: r.get('published_at') or '') if releases else None
+
+
 def _cached_valid(path: Path) -> bool:
     try:
         expected = path.with_suffix('.sha256').read_text(encoding='ascii').strip()
@@ -38,9 +55,9 @@ def _cached_valid(path: Path) -> bool:
 def install_latest_release(path: Path) -> str:
     """Install latest data release; fall back only to a checksum-verified prior download."""
     try:
-        releases = json.loads(_read_url(API_URL))
-        release = next(r for r in releases if r.get('tag_name', '').startswith('data-')
-                       and not r.get('draft') and not r.get('prerelease'))
+        release = latest_data_release()
+        if release is None:
+            raise ValueError('No published data release exists')
         assets = {a['name']: a['browser_download_url'] for a in release['assets']}
         expected = _read_url(assets['gold.duckdb.sha256']).decode('ascii').split()[0].lower()
         if not re.fullmatch(r'[0-9a-f]{64}', expected):

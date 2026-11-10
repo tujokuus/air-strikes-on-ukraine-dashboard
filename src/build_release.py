@@ -110,8 +110,18 @@ def build_candidate(root: Path, *, download: bool = True, compare_previous: bool
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('workdir', type=Path)
+    parser.add_argument('--expected-hashes', help='JSON hashes from source-change detection')
     args = parser.parse_args()
-    build_candidate(args.workdir)
+    if args.expected_hashes:
+        from src.check_source_changes import source_hashes
+        root = args.workdir.resolve()
+        with patch.object(download_data, 'BRONZE_DATA_DIR', root / 'bronze'):
+            download_data.main()
+        if source_hashes(root / 'bronze') != json.loads(args.expected_hashes):
+            raise ValueError('Kaggle source changed between detection and validation; retry the workflow')
+        build_candidate(root, download=False)
+    else:
+        build_candidate(args.workdir)
 
 
 if __name__ == '__main__':
