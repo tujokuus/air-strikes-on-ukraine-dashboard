@@ -1,0 +1,137 @@
+name: Build and publish approved data
+
+on:
+  schedule:
+    - cron: '13 6 * * *'
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: approved-data-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+      hashes: ${{ steps.detect.outputs.hashes }}
+    steps:
+      - name: Check two-day schedule
+        id: schedule
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != schedule ]] || (( ($(date -u +%s) / 86400) % 2 == 0 )); then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.schedule.outputs.run == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: steps.schedule.outputs.run == 'true'
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        if: steps.schedule.outputs.run == 'true'
+        run: python -m pip install -r requirements.txt
+      - name: Download and compare source data
+        id: detect
+        if: steps.schedule.outputs.run == 'true'
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: python -m src.check_source_changes "$RUNNER_TEMP/source-check"
+
+  candidate:
+    needs: detect
+    if: needs.detect.outputs.hashes != '' && (needs.detect.outputs.changed == 'true' || github.event_name == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt -r monitoring/requirements.txt 'pytest>=9.2.0,<10.0.0'
+          python -m playwright install --with-deps chromium
+      - name: Run automated tests
+        run: python -m pytest -q
+      - name: Download, verify snapshot, validate and build candidate
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          SOURCE_HASHES: ${{ needs.detect.outputs.hashes }}
+        run: python -m src.build_release "$RUNNER_TEMP/data-candidate" --expected-hashes "$SOURCE_HASHES"
+      - name: Browser test candidate
+        env:
+          DASHBOARD_GOLD_DB: ${{ runner.temp }}/data-candidate/gold/gold.duckdb
+        run: |
+          python -m streamlit run app.py --server.headless true > "$RUNNER_TEMP/streamlit.log" 2>&1 &
+          for i in {1..60}; do curl -fsS http://127.0.0.1:8501/_stcore/health && break; sleep 2; done
+          python monitoring/check_candidate.py
+      - name: Prepare approved candidate
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          LICENSE_CONFIRMED: ${{ vars.DATA_LICENSE_CONFIRMED }}
+        shell: bash
+        run: |
+          if [[ "$LICENSE_CONFIRMED" != 'true' ]]; then
+            echo 'Set DATA_LICENSE_CONFIRMED=true after checking the Kaggle dataset license and redistribution terms.' >&2
+            exit 1
+          fi
+          cp "$RUNNER_TEMP/data-candidate/gold/gold.duckdb" "$RUNNER_TEMP/data-candidate/gold.duckdb"
+          (cd "$RUNNER_TEMP/data-candidate" && sha256sum -c gold.duckdb.sha256)
+      - name: Transfer tested candidate
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-data-candidate
+          path: |
+            ${{ runner.temp }}/data-candidate/gold.duckdb
+            ${{ runner.temp }}/data-candidate/gold.duckdb.sha256
+            ${{ runner.temp }}/data-candidate/metadata.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload candidate diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-diagnostics
+          path: |
+            candidate-artifacts/
+            ${{ runner.temp }}/streamlit.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    needs: [detect, candidate]
+    if: >-
+      needs.detect.outputs.changed == 'true' && github.event_name != 'pull_request' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-data-candidate
+          path: candidate
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          (cd candidate && sha256sum -c gold.duckdb.sha256)
+          tag="data-$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --title "Approved data $tag" --notes 'Validated dashboard data. See repository README for data attribution and license.' candidate/gold.duckdb candidate/gold.duckdb.sha256 candidate/metadata.json
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false

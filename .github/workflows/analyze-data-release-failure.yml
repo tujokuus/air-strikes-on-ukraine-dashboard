@@ -1,0 +1,59 @@
+name: Analyze data release failure
+
+on:
+  workflow_run:
+    workflows: ['Build and publish approved data']
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  analyze:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      EVIDENCE_KIND: data_release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install analysis dependencies
+        run: python -m pip install -r monitoring/agent/requirements.txt
+      - name: Collect failed workflow logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MONITOR_RUN_ID: ${{ github.event.workflow_run.id }}
+          MONITOR_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: python monitoring/agent/collect_evidence.py
+      - name: Analyze failure
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python monitoring/agent/analyze_failure.py
+      - name: Publish analysis summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f analysis-output/report.md ]]; then
+            cat analysis-output/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' '# Data-release failure analysis' '' 'Analysis did not complete; check the original run.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload analysis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-release-failure-analysis
+          path: analysis-output/report.md
+          if-no-files-found: ignore
+          retention-days: 7

@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 monitor-artifacts/
+candidate-artifacts/
+.local-data-tests/
+.test-release-temp/
 analysis-output/
 .ipynb_checkpoints/
 .venv/
@@ -20,6 +23,7 @@ data/gold/*.duckdb
 data/gold/*.db
 data/gold/*.duckdb*
 data/gold/*.db*
+data/gold/*.sha256
 
 # Legacy pre-medallion paths
 data/raw/

@@ -92,7 +92,7 @@ def fetch_screenshot(run_id: str, attempt_info: dict, repository: str) -> tuple[
         return None, "The screenshot could not be retrieved or verified; analysis uses logs only."
 
 
-def collect(run_id: str, attempt: str | None, repository: str) -> dict:
+def collect(run_id: str, attempt: str | None, repository: str, *, data_release: bool = False) -> dict:
     if not re.fullmatch(r"[1-9][0-9]*", run_id):
         raise ValueError("Run ID must be a positive integer.")
     if attempt and not re.fullmatch(r"[1-9][0-9]*", attempt):
@@ -104,7 +104,7 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
     selected_attempt = attempt or str(run["run_attempt"])
     run = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}/attempts/{selected_attempt}").stdout)
     if (
-        run.get("path") != WORKFLOW_PATH
+        run.get("path") != ('.github/workflows/data-release.yml' if data_release else WORKFLOW_PATH)
         or run.get("status") != "completed"
         or run.get("conclusion") != "failure"
         or run.get("event") not in {"schedule", "workflow_dispatch"}
@@ -129,7 +129,10 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
         log = output.read().decode("utf-8", errors="replace")
     if not log.strip():
         warning = warning or "No failed-step logs were available."
-    screenshot, screenshot_note = fetch_screenshot(run_id, run, repository)
+    if data_release:
+        screenshot, screenshot_note = None, 'Data-release analysis uses failed-step logs only.'
+    else:
+        screenshot, screenshot_note = fetch_screenshot(run_id, run, repository)
     return {
         "run_id": run_id,
         "attempt": selected_attempt,
@@ -145,7 +148,7 @@ def collect(run_id: str, attempt: str | None, repository: str) -> dict:
 
 def main() -> int:
     try:
-        evidence = collect(os.environ.get("MONITOR_RUN_ID", ""), os.environ.get("MONITOR_RUN_ATTEMPT") or None, os.environ.get("GITHUB_REPOSITORY", ""))
+        evidence = collect(os.environ.get("MONITOR_RUN_ID", ""), os.environ.get("MONITOR_RUN_ATTEMPT") or None, os.environ.get("GITHUB_REPOSITORY", ""), data_release=os.environ.get('EVIDENCE_KIND') == 'data_release')
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Collected evidence for failed monitor run {evidence['run_id']}, attempt {evidence['attempt']}.")

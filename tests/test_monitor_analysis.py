@@ -132,3 +132,18 @@ def test_model_input_contains_at_most_one_image():
     assert "aW1hZ2U=" not in content[0]["text"]
     no_image = analyze_failure.build_input({"screenshot_base64": None})[0]["content"]
     assert len(no_image) == 1
+
+
+def test_data_release_failure_evidence_uses_only_matching_workflow(monkeypatch):
+    run = monitor_run(path='.github/workflows/data-release.yml')
+    monkeypatch.setattr(collect_evidence, 'gh', lambda *args: SimpleNamespace(stdout=json.dumps(run)))
+    monkeypatch.setattr(collect_evidence.tempfile, 'TemporaryFile', io.BytesIO)
+    def fake_run(args, *, stdout, **kwargs):
+        stdout.write(b'token=secret-value validation failed')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(collect_evidence.subprocess, 'run', fake_run)
+    evidence = collect_evidence.collect('123', '2', 'example/project', data_release=True)
+    assert 'secret-value' not in evidence['failed_step_log']
+    assert evidence['screenshot_base64'] is None
+    with pytest.raises(ValueError):
+        collect_evidence.collect('123', '2', 'example/project')

@@ -247,6 +247,10 @@ def transform_weapon_reference(raw_reference: pd.DataFrame) -> pd.DataFrame:
     reference = raw_reference.copy()
     reference.columns = [_snake_case(column) for column in reference.columns]
     reference = _strip_object_columns(reference)
+    for column in ('launch_platform', 'name', 'name_nato', 'in_service', 'designer',
+                   'manufacturer', 'guidance_system', 'unit_cost', 'category', 'type', 'national_origin'):
+        if column not in reference.columns:
+            reference[column] = ''
     reference = reference.rename(
         columns={
             "model": "weapon_model",
@@ -285,6 +289,10 @@ def transform_attacks(
     attacks = raw_attacks.copy()
     attacks.columns = [_snake_case(column) for column in attacks.columns]
     attacks = _strip_object_columns(attacks)
+    for column in ('time_end', 'launch_place', 'target_main', 'carrier', 'affected_region',
+                   'destroyed_details', 'launched_details', 'launch_place_details', 'source'):
+        if column not in attacks.columns:
+            attacks[column] = ''
     attacks = attacks.rename(columns={"model": "weapon_model"})
     attacks["weapon_model_key"] = attacks["weapon_model"].map(_normalize_model_key)
     attacks["event_date"] = _derive_event_date(attacks["time_start"])
