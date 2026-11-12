@@ -26,6 +26,8 @@ The dataset is licensed under [Creative Commons Attribution-NonCommercial-ShareA
 
 The original data has been transformed for this project. Changes include column normalization, date parsing, weapon reference enrichment, target area normalization, DuckDB silver/gold tables, and derived dashboard metrics such as air defense success percentage.
 
+The region map includes Ukrainian administrative boundary data from [slawomirmatuszak/ukrainian_geodata](https://github.com/slawomirmatuszak/ukrainian_geodata), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The map translates region names and joins aggregated dashboard data to the polygons. The dark basemap is provided by CARTO and OpenStreetMap contributors and requires a network connection.
+
 This project is intended for non-commercial educational and portfolio use.
 
 The code in this repository and the dataset are licensed separately. The source dataset and any redistributed derived data outputs are based on the Kaggle dataset by piterfm and should keep the same CC BY-NC-SA 4.0 license and attribution.
