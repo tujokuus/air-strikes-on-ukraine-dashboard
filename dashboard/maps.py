@@ -1,7 +1,147 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pandas as pd
 import pydeck as pdk
 import streamlit as st
+
+
+REGION_NAMES = {
+    'Автономна Республіка Крим': 'Crimea', 'Вінницька область': 'Vinnytsia oblast',
+    'Волинська область': 'Volyn oblast', 'Дніпропетровська область': 'Dnipropetrovsk oblast',
+    'Донецька область': 'Donetsk oblast', 'Житомирська область': 'Zhytomyr oblast',
+    'Закарпатська область': 'Zakarpattia oblast', 'Запорізька область': 'Zaporizhzhia oblast',
+    'Івано-Франківська область': 'Ivano-Frankivsk oblast', 'Кіровоградська область': 'Kirovohrad oblast',
+    'Луганська область': 'Luhansk oblast', 'Львівська область': 'Lviv oblast',
+    'Миколаївська область': 'Mykolaiv oblast', 'Одеська область': 'Odesa oblast',
+    'Полтавська область': 'Poltava oblast', 'Рівненська область': 'Rivne oblast',
+    'Сумська область': 'Sumy oblast', 'Тернопільська область': 'Ternopil oblast',
+    'Харківська область': 'Kharkiv oblast', 'Хмельницька область': 'Khmelnytskyi oblast',
+    'Черкаська область': 'Cherkasy oblast', 'Чернівецька область': 'Chernivtsi oblast',
+    'Чернігівська область': 'Chernihiv oblast', 'Херсонська область': 'Kherson oblast',
+    'Київська область': 'Kyiv oblast', 'Севастополь': 'Sevastopol',
+}
+REGION_BOUNDARIES = Path(__file__).parent / 'assets' / 'ukraine_regions.geojson'
+DIRECTION_CENTERS = {
+    'north': (31.5, 51.0), 'north-east': (35.4, 50.8), 'east': (36.8, 49.0),
+    'south-east': (35.5, 47.7), 'south': (31.5, 46.8), 'center': (31.5, 49.0),
+    'center-east': (34.2, 48.9), 'center-west': (27.5, 49.2), 'west': (24.5, 49.5),
+}
+
+
+@st.cache_data(show_spinner=False)
+def load_region_boundaries() -> dict:
+    return json.loads(REGION_BOUNDARIES.read_text(encoding='utf-8'))
+
+
+def make_region_features(boundaries: dict, frame: pd.DataFrame, metric: str) -> tuple[dict, float]:
+    """Join reporting oblasts to polygons, leaving unmapped regions neutral."""
+    if frame['reporting_region'].duplicated().any():
+        raise ValueError('Expected one row per reporting region')
+    rows = frame.set_index('reporting_region').to_dict('index')
+    boundary_names = {REGION_NAMES.get(f['properties']['region'], f['properties']['region']) for f in boundaries['features']}
+    known = pd.to_numeric(frame.loc[frame['reporting_region'].isin(boundary_names), metric], errors='coerce').dropna()
+    maximum = 100.0 if metric == 'air_defense_success_pct' else (max(float(known.max()), 0.0) if not known.empty else 0.0)
+    features = []
+    for feature in boundaries['features']:
+        name = REGION_NAMES.get(feature['properties']['region'], feature['properties']['region'])
+        row = rows.get(name)
+        value = row.get(metric) if row is not None else None
+        valid = value is not None and pd.notna(value)
+        ratio = max(0.0, float(value)) / maximum if valid and maximum > 0 else 0.0
+        if metric != 'air_defense_success_pct':
+            ratio = ratio ** 0.5
+        high = [83, 173, 134, 240] if metric == 'air_defense_success_pct' else [224, 131, 62, 240]
+        color = interpolate_rgba([43, 67, 92, 230], high, ratio) if valid else [29, 42, 59, 220]
+        props = {
+            'name': name,
+            'value_label': f'{float(value):,.1f}'.removesuffix('.0') if valid else 'Not available',
+            'records_label': f"{int(row['attack_rows']):,}" if row is not None and pd.notna(row.get('attack_rows')) else 'No mapped data',
+            'fill_color': color,
+        }
+        features.append({'type': 'Feature', 'geometry': feature['geometry'], 'properties': props})
+    return {'type': 'FeatureCollection', 'features': features}, maximum
+
+
+def render_region_choropleth(frame: pd.DataFrame, metric: str, metric_label: str) -> None:
+    boundaries, maximum = make_region_features(load_region_boundaries(), frame, metric)
+    layer = pdk.Layer('GeoJsonLayer', data=boundaries, get_fill_color='properties.fill_color',
+                      get_line_color=[95, 121, 150, 180], line_width_min_pixels=1,
+                      pickable=True, auto_highlight=True, stroked=True, filled=True)
+    deck = pdk.Deck(
+        map_style='https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        initial_view_state=pdk.ViewState(latitude=48.9, longitude=31.5, zoom=4.6, pitch=0),
+        layers=[layer],
+        tooltip={'text': '{name}\n' + metric_label + ': {value_label}\nReported records: {records_label}'},
+    )
+    st.pydeck_chart(deck, width='stretch', height=700)
+    high_color = '#53ad86' if metric == 'air_defense_success_pct' else '#e0833e'
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:.7rem;font-size:.85rem;flex-wrap:wrap">'
+        '<span>Lower</span><span style="width:180px;height:10px;border-radius:8px;'
+        f'background:linear-gradient(90deg,#2b435c,{high_color})"></span>'
+        f'<span>Higher (max {maximum:,.1f})</span>'
+        '<span style="margin-left:1rem;color:#8291a5">■ No value for selected metric</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def prepare_direction_markers(frame: pd.DataFrame, metric: str) -> tuple[list[dict], float]:
+    """Map broad directional reports to illustrative points, never to individual oblasts."""
+    directional = frame[(frame['target_scope'] == 'directional_or_other_macro') &
+                        frame['area_macro'].isin(DIRECTION_CENTERS)].copy()
+    values = pd.to_numeric(directional[metric], errors='coerce').dropna()
+    maximum = 100.0 if metric == 'air_defense_success_pct' else (max(float(values.max()), 0.0) if not values.empty else 0.0)
+    markers = []
+    for row in directional.to_dict('records'):
+        value = row.get(metric)
+        if value is None or pd.isna(value):
+            continue
+        ratio = max(0, float(value)) / maximum if maximum > 0 else 0
+        if metric != 'air_defense_success_pct':
+            ratio = ratio ** 0.5
+        high = [83, 173, 134, 230] if metric == 'air_defense_success_pct' else [224, 131, 62, 230]
+        markers.append({
+            'direction': row['area_macro'].replace('-', ' ').title(),
+            'position': DIRECTION_CENTERS[row['area_macro']],
+            'value_label': f'{float(value):,.1f}'.removesuffix('.0'),
+            'records_label': f"{int(row['attack_rows']):,}",
+            'color': interpolate_rgba([43, 67, 92, 230], high, ratio),
+        })
+    return markers, maximum
+
+
+def render_direction_map(frame: pd.DataFrame, metric: str, metric_label: str) -> None:
+    markers, maximum = prepare_direction_markers(frame, metric)
+    if not markers:
+        st.info('No directional data is available for this metric in the selected period.')
+        return
+    regions = pdk.Layer('GeoJsonLayer', data=load_region_boundaries(),
+                        get_fill_color=[29, 42, 59, 220], get_line_color=[95, 121, 150, 180],
+                        line_width_min_pixels=1, stroked=True, filled=True)
+    points = pdk.Layer('ScatterplotLayer', data=markers, get_position='position',
+                       get_fill_color='color', get_radius=30000, radius_min_pixels=14,
+                       radius_max_pixels=22, stroked=True, get_line_color=[238, 245, 255, 220],
+                       line_width_min_pixels=2, pickable=True, auto_highlight=True)
+    labels = pdk.Layer('TextLayer', data=markers, get_position='position', get_text='direction',
+                       get_color=[240, 245, 255, 255], get_size=14, get_pixel_offset=[0, -30],
+                       get_text_anchor='middle', get_alignment_baseline='center')
+    deck = pdk.Deck(map_style='https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+                    initial_view_state=pdk.ViewState(latitude=48.9, longitude=31.5, zoom=4.6, pitch=0),
+                    layers=[regions, points, labels],
+                    tooltip={'text': '{direction}\n' + metric_label + ': {value_label}\nReported records: {records_label}'})
+    st.pydeck_chart(deck, width='stretch', height=700)
+    high_color = '#53ad86' if metric == 'air_defense_success_pct' else '#e0833e'
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:.7rem;font-size:.85rem">'
+        '<span>Lower</span><span style="width:180px;height:10px;border-radius:8px;'
+        f'background:linear-gradient(90deg,#2b435c,{high_color})"></span>'
+        f'<span>Higher (max {maximum:,.1f})</span></div>', unsafe_allow_html=True,
+    )
+    st.caption(f'Color intensity uses the selected metric; scale maximum: {maximum:,.1f}.'
+               ' Count colors use a square-root scale; percentages use a 0–100% scale.')
 
 
 def pick_available_column(frame, preferred: str, fallback: str) -> str:

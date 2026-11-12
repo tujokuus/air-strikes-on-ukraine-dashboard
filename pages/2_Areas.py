@@ -6,28 +6,24 @@ import streamlit as st
 
 from dashboard.date_queries import (
     get_filtered_area_macros,
-    get_filtered_directional_macros,
     get_filtered_region_map,
 )
 from dashboard.filters import get_selected_date_range
 from dashboard.maps import (
-    add_map_marker_columns,
-    pick_available_column,
-    render_map_legend,
-    render_point_map,
+    render_direction_map,
+    render_region_choropleth,
 )
 
 
 st.title("Areas")
-st.caption("Target macro areas, directional summaries, and centroid maps.")
+st.caption("Target macro areas and regional activity.")
 selected_start, selected_end = get_selected_date_range()
 st.caption(f"Selected range: {selected_start:%d.%m.%Y} - {selected_end:%d.%m.%Y}")
 
 area_macros = get_filtered_area_macros(selected_start, selected_end)
-directional = get_filtered_directional_macros(selected_start, selected_end)
 region_map = get_filtered_region_map(selected_start, selected_end)
 
-if area_macros.empty and directional.empty and region_map.empty:
+if area_macros.empty and region_map.empty:
     st.info("No area or map data was found in the selected date range.")
     st.stop()
 
@@ -255,6 +251,14 @@ if selected_metrics:
 else:
     st.info("Select at least one metric to show the area macro chart.")
 
+st.info(
+    "**Location and security context:** These maps summarize historical public reports, not live tracking, "
+    "precise impact locations or air-defense positions. Some locations are deliberately broad or missing. "
+    "Air-defense percentages are calculated from reported destroyed and launched totals; reporting can be "
+    "incomplete, and regional estimates are not a measure of operational effectiveness. Avoid sharing "
+    "sensitive current military locations or unconfirmed strike details."
+)
+
 st.markdown(
     f"""
     <div style="
@@ -266,7 +270,7 @@ st.markdown(
         margin: 1rem 0;
         background: #fff1f2;
     ">
-        Map context: the maps only show rows that can be placed on approximate coordinates.
+        Regional map context: only rows matched to Ukrainian region boundaries are shown.
         Nationwide rows are {area_macro_value('nationwide', 'launched_share_pct')}% of launched total
         and {area_macro_value('nationwide', 'strike_record_share_pct')}% of strike records.
         Unknown target rows are {area_macro_value('unknown', 'launched_share_pct')}% of launched total
@@ -277,125 +281,51 @@ st.markdown(
 )
 
 
-st.subheader("Directional Macro Map")
-
-map_metric = st.radio(
-    "Map marker metric",
-    ["Launched", "Strike records", "Air defense success %"],
-    horizontal=True,
-)
+st.subheader("Reported activity by region")
 st.caption(
-    "This controls marker color on the directional map. In air defense mode, marker size still follows launched total."
+    "Regions show reports that could be mapped to an oblast. City reports are grouped "
+    "with their reporting oblast; nationwide and unknown locations are not shown. "
+    "The boundary file does not include a separate Kyiv city polygon."
 )
-
-# Macro centroids give a coarse directional view, not exact strike locations.
-directional_map = directional[directional["lat"].notna() & directional["lon"].notna()].copy()
-directional_metric_column = (
-    "launched_total"
-    if map_metric == "Launched"
-    else "attack_rows"
-    if map_metric == "Strike records"
-    else "air_defense_success_pct"
-)
-directional_metric_column = pick_available_column(directional_map, directional_metric_column, "launched_total")
-directional_size_column = "launched_total" if map_metric == "Air defense success %" else directional_metric_column
-directional_color_scheme = "green" if map_metric == "Air defense success %" else "red"
-directional_map = add_map_marker_columns(
-    directional_map,
-    color_value_column=directional_metric_column,
-    size_value_column=directional_size_column,
-    color_scheme=directional_color_scheme,
-)
-map_col, legend_col = st.columns([4.4, 1.6], vertical_alignment="top")
-with map_col:
-    render_point_map(
-        directional_map,
-        tooltip_text=(
-            "{area_macro}\n"
-            "Strike records: {attack_rows}\n"
-            "Active days: {active_days}\n"
-            "Launched total: {launched_total}\n"
-            "Destroyed total: {destroyed_total}\n"
-            "Air defense success %: {air_defense_success_pct}"
-        ),
-        height=720,
-    )
-with legend_col:
-    render_map_legend(
-        metric_label=map_metric,
-        size_label="Launched total" if map_metric == "Air defense success %" else map_metric,
-        color_scheme=directional_color_scheme,
-    )
-
-st.subheader("Specific Region Map")
-
-specific_region_map_metric = st.radio(
-    "Specific region map marker metric",
-    ["Launched", "Strike records", "Air defense success %"],
+region_metric = st.radio(
+    "Region color represents",
+    ["Reported strike records", "Estimated allocated launched weapons", "Air defense success %"],
     horizontal=True,
-)
-st.caption(
-    "This controls marker color on the specific region map. In air defense mode, marker size still follows launched total."
-)
-
-# Drop rows without coordinates because Streamlit cannot place them on the map.
-mapped_regions = region_map[region_map["lat"].notna()].copy()
-show_foreign_regions = st.toggle("Show foreign regions", value=False)
-if not show_foreign_regions and "area_kind" in mapped_regions.columns:
-    mapped_regions = mapped_regions[mapped_regions["area_kind"] != "foreign_oblast"].copy()
-
-region_launched_column = (
-    "launched_total_allocated"
-    if "launched_total_allocated" in mapped_regions.columns
-    else "launched_total_exploded"
 )
 region_metric_column = (
-    region_launched_column
-    if specific_region_map_metric == "Launched"
-    else "attack_rows"
-    if specific_region_map_metric == "Strike records"
-    else "air_defense_success_pct"
+    "attack_rows" if region_metric == "Reported strike records" else
+    "launched_total_allocated" if region_metric == "Estimated allocated launched weapons" else
+    "air_defense_success_pct"
 )
-region_metric_column = pick_available_column(mapped_regions, region_metric_column, region_launched_column)
-region_size_column = (
-    region_launched_column
-    if specific_region_map_metric == "Air defense success %"
-    else region_metric_column
+render_region_choropleth(region_map, region_metric_column, region_metric)
+st.caption(
+    "Reported strike records are dataset rows, not necessarily distinct strikes. "
+    "Allocated weapons split multi-region reports evenly; they are estimates, not confirmed regional counts. "
+    "Neutral regions have no value for the selected metric, not necessarily zero strikes."
 )
-region_color_scheme = "green" if specific_region_map_metric == "Air defense success %" else "red"
-mapped_regions = add_map_marker_columns(
-    mapped_regions,
-    color_value_column=region_metric_column,
-    size_value_column=region_size_column,
-    color_scheme=region_color_scheme,
+st.caption("Count colors use a square-root scale to make lower values easier to distinguish. Percentages use a 0–100% scale.")
+st.caption(
+    "Boundaries: Ukrainian geojson data by slawomirmatuszak and contributors, "
+    "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); "
+    "[source](https://github.com/slawomirmatuszak/ukrainian_geodata). "
+    "Basemap: CARTO / OpenStreetMap contributors."
 )
-tooltip_lines = [
-    "{area_region}",
-    "Macro area: {area_macro}",
-    "Strike records: {attack_rows}",
-    "Active days: {active_days}",
-    f"{region_launched_column}: " + "{" + region_launched_column + "}",
-    "Exploded launched total: {launched_total_exploded}",
-    "Air defense success %: {air_defense_success_pct}",
-    "Area kind: {area_kind}",
-]
-if "reporting_region" in mapped_regions.columns:
-    tooltip_lines.insert(1, "Reporting region: {reporting_region}")
-if "exploded_region_rows" in mapped_regions.columns:
-    tooltip_lines.append("Exploded region rows: {exploded_region_rows}")
-if "source_region_count" in mapped_regions.columns:
-    tooltip_lines.append("Source regions combined: {source_region_count}")
 
-map_col, legend_col = st.columns([4.4, 1.6], vertical_alignment="top")
-with map_col:
-    render_point_map(
-        mapped_regions,
-        tooltip_text="\n".join(tooltip_lines),
-        height=760,
-    )
-with legend_col:
-    render_map_legend(
-        metric_label=specific_region_map_metric,
-        size_label="Launched total" if specific_region_map_metric == "Air defense success %" else specific_region_map_metric,
-        color_scheme=region_color_scheme,
-    )
+st.subheader("Reports by broad direction")
+st.caption(
+    "Only source rows described by a broad direction are included. The markers are illustrative "
+    "labels for directions, not strike, launch or air-defense locations. Oblast-colored boundaries "
+    "are not inferred from these reports. Nationwide, front-line and mixed-direction "
+    "categories that cannot be assigned to one displayed direction are excluded."
+)
+direction_metric = st.radio(
+    "Directional marker color represents",
+    ["Reported strike records", "Reported launched weapons", "Air defense success %"],
+    horizontal=True,
+)
+direction_metric_column = (
+    "attack_rows" if direction_metric == "Reported strike records" else
+    "launched_total" if direction_metric == "Reported launched weapons" else
+    "air_defense_success_pct"
+)
+render_direction_map(area_macros, direction_metric_column, direction_metric)
